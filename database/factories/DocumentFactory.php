@@ -35,6 +35,7 @@ class DocumentFactory extends Factory
             'status' => fake()->randomElement(['draft', 'pending', 'signed', 'rejected']),
             'file_path' => 'documents/' . fake()->uuid() . '.pdf',
             'uploaded_by_id' => \App\Models\User::factory(),
+            'created_at' => fake()->dateTimeBetween('-1 year', 'now'),
         ];
     }
 }

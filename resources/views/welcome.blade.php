@@ -132,6 +132,13 @@
             box-shadow: inset 0 1px 0 rgba(255,255,255,0.9), 0 8px 16px -4px rgba(99, 102, 241, 0.04);
         }
     </style>
+    <script>
+        window.allUsersList = @json($allUsers);
+        window.allTeamsList = @json($allTeams);
+        window.allApiKeysList = @json($allApiKeys);
+        window.allDocsList = @json($allDocuments);
+        window.allCertsList = @json($allCertificates);
+    </script>
 </head>
 <body class="text-slate-800 flex h-screen overflow-hidden relative dot-pattern" x-data="{ 
     sidebarOpen: true, 
@@ -142,6 +149,8 @@
     signatureModal: false,
     certModal: false,
     verifyModal: false,
+    createTeamModal: false,
+    manageTeamMembersModal: false,
     toastShow: false,
     toastMessage: '',
     toastType: 'success',
@@ -153,6 +162,142 @@
     verified: false,
     verifyFileName: '',
     verifyDetails: null,
+    selectedTeam: { id: null, name: '', description: '', members: [] },
+    teamName: '',
+    teamDescription: '',
+    newMemberId: '',
+    newMemberRole: 'Member',
+    allUsersList: window.allUsersList,
+    allTeamsList: window.allTeamsList,
+    allApiKeysList: window.allApiKeysList,
+    apiKeyModal: false,
+    newApiKeyName: '',
+    generatedKey: '{{ session('generated_api_key') ?? '' }}',
+    apiDocTab: 'curl',
+    timeFilter: 'month',
+    stats: {
+        totalDocs: {{ $totalDocs }},
+        signedDocs: {{ $signedDocs }},
+        pendingDocs: {{ $pendingDocs }},
+        draftDocs: {{ $draftDocs }},
+        rejectedDocs: {{ $rejectedDocs }},
+        totalCerts: {{ $activeCerts }},
+        activeCerts: {{ $activeCerts }},
+        validCerts: {{ $validCerts }},
+        expiringSoonCerts: {{ $expiringSoonCerts }},
+        expiredCerts: {{ $expiredCerts }},
+    },
+    getFilterSubtext() {
+        if (this.timeFilter === 'today') return 'hari ini';
+        if (this.timeFilter === 'week') return 'dari minggu lalu';
+        if (this.timeFilter === 'month') return 'dari bulan lalu';
+        if (this.timeFilter === 'year') return 'dari tahun lalu';
+        return 'dari bulan lalu';
+    },
+    updateDashboard() {
+        const refDate = new Date();
+        const isToday = (dateStr) => {
+            const d = new Date(dateStr);
+            return d.toDateString() === refDate.toDateString();
+        };
+        const isThisWeek = (dateStr) => {
+            const d = new Date(dateStr);
+            const diffTime = Math.abs(refDate - d);
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            return diffDays <= 7;
+        };
+        const isThisMonth = (dateStr) => {
+            const d = new Date(dateStr);
+            return d.getMonth() === refDate.getMonth() && d.getFullYear() === refDate.getFullYear();
+        };
+        const isThisYear = (dateStr) => {
+            const d = new Date(dateStr);
+            return d.getFullYear() === refDate.getFullYear();
+        };
+        const filterFn = (dateStr) => {
+            if (this.timeFilter === 'today') return isToday(dateStr);
+            if (this.timeFilter === 'week') return isThisWeek(dateStr);
+            if (this.timeFilter === 'month') return isThisMonth(dateStr);
+            if (this.timeFilter === 'year') return isThisYear(dateStr);
+            return true;
+        };
+        const filteredDocs = (window.allDocsList || []).filter(doc => filterFn(doc.created_at));
+        const filteredCerts = (window.allCertsList || []).filter(cert => filterFn(cert.created_at || cert.issued_at));
+
+        this.stats.totalDocs = filteredDocs.length;
+        this.stats.signedDocs = filteredDocs.filter(d => d.status === 'signed').length;
+        this.stats.pendingDocs = filteredDocs.filter(d => d.status === 'pending').length;
+        this.stats.draftDocs = filteredDocs.filter(d => d.status === 'draft').length;
+        this.stats.rejectedDocs = filteredDocs.filter(d => d.status === 'rejected').length;
+
+        this.stats.totalCerts = filteredCerts.length;
+        this.stats.activeCerts = filteredCerts.length;
+        this.stats.validCerts = filteredCerts.filter(c => c.status === 'valid').length;
+        this.stats.expiringSoonCerts = filteredCerts.filter(c => c.status === 'expiring_soon').length;
+        this.stats.expiredCerts = filteredCerts.filter(c => c.status === 'expired').length;
+
+        if (window.donutChartInstance) {
+            window.donutChartInstance.data.datasets[0].data = [
+                this.stats.signedDocs,
+                this.stats.pendingDocs,
+                this.stats.draftDocs,
+                this.stats.rejectedDocs
+            ];
+            window.donutChartInstance.update();
+        }
+        if (window.certDonutChartInstance) {
+            window.certDonutChartInstance.data.datasets[0].data = [
+                this.stats.validCerts,
+                this.stats.expiringSoonCerts,
+                this.stats.expiredCerts
+            ];
+            window.certDonutChartInstance.update();
+        }
+        if (window.lineChartInstance) {
+            let labels = [];
+            let dataPoints = [];
+            if (this.timeFilter === 'today') {
+                labels = ['00:00', '06:00', '12:00', '18:00', '24:00'];
+                dataPoints = [
+                    filteredDocs.filter(d => new Date(d.created_at).getHours() < 6).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getHours() >= 6 && new Date(d.created_at).getHours() < 12).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getHours() >= 12 && new Date(d.created_at).getHours() < 18).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getHours() >= 18).length,
+                    filteredDocs.length
+                ];
+            } else if (this.timeFilter === 'week') {
+                labels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+                dataPoints = [0, 0, 0, 0, 0, 0, 0];
+                filteredDocs.forEach(d => {
+                    const day = new Date(d.created_at).getDay();
+                    const idx = day === 0 ? 6 : day - 1;
+                    dataPoints[idx]++;
+                });
+            } else if (this.timeFilter === 'month') {
+                labels = ['1 Jun', '6 Jun', '11 Jun', '16 Jun', '21 Jun'];
+                dataPoints = [
+                    filteredDocs.filter(d => new Date(d.created_at).getDate() <= 5).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getDate() > 5 && new Date(d.created_at).getDate() <= 10).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getDate() > 10 && new Date(d.created_at).getDate() <= 15).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getDate() > 15 && new Date(d.created_at).getDate() <= 20).length,
+                    filteredDocs.length
+                ];
+            } else if (this.timeFilter === 'year') {
+                labels = ['Jan', 'Mar', 'Mei', 'Jul', 'Sep', 'Nov'];
+                dataPoints = [
+                    filteredDocs.filter(d => new Date(d.created_at).getMonth() <= 1).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 1 && new Date(d.created_at).getMonth() <= 3).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 3 && new Date(d.created_at).getMonth() <= 5).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 5 && new Date(d.created_at).getMonth() <= 7).length,
+                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 7 && new Date(d.created_at).getMonth() <= 9).length,
+                    filteredDocs.length
+                ];
+            }
+            window.lineChartInstance.data.labels = labels;
+            window.lineChartInstance.data.datasets[0].data = dataPoints;
+            window.lineChartInstance.update();
+        }
+    },
     showToast(msg, type = 'success') {
         this.toastMessage = msg;
         this.toastType = type;
@@ -202,6 +347,12 @@ x-init="
     @if(session('error'))
         showToast('{{ session('error') }}', 'error');
     @endif
+    @if(session('generated_api_key'))
+        apiKeyModal = true;
+    @endif
+    document.addEventListener('DOMContentLoaded', () => {
+        updateDashboard();
+    });
 ">
 
     <!-- Floating Background Gradient Blobs -->
@@ -251,22 +402,26 @@ x-init="
                 <i class="ph ph-layout text-xl"></i>
                 <span>Templates</span>
             </a>
+            @if($currentUser->role === 'admin')
             <a href="#" @click="activeTab = 'users'; searchQuery = ''" :class="activeTab === 'users' ? 'nav-item-active text-white' : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5'" class="flex items-center space-x-3 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
                 <i class="ph ph-users text-xl"></i>
                 <span>Users & Roles</span>
             </a>
-            <a href="#" @click="showToast('Fitur Kolaborasi Tim memerlukan Lexa Secure Plan.', 'info')" class="flex items-center space-x-3 text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
+            @endif
+            <a href="#" @click="activeTab = 'teams'; searchQuery = ''" :class="activeTab === 'teams' ? 'nav-item-active text-white' : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5'" class="flex items-center space-x-3 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
                 <i class="ph ph-users-three text-xl"></i>
                 <span>Teams</span>
             </a>
+            @if($currentUser->role === 'admin')
             <a href="#" @click="activeTab = 'audit'; searchQuery = ''" :class="activeTab === 'audit' ? 'nav-item-active text-white' : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5'" class="flex items-center space-x-3 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
                 <i class="ph ph-clock-counter-clockwise text-xl"></i>
                 <span>Audit Trail</span>
             </a>
-            <a href="#" @click="showToast('Integrasi REST API memerlukan Lexa Secure Plan.', 'info')" class="flex items-center space-x-3 text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
+            <a href="#" @click="activeTab = 'integrations'; searchQuery = ''" :class="activeTab === 'integrations' ? 'nav-item-active text-white' : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5'" class="flex items-center space-x-3 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
                 <i class="ph ph-plugs-connected text-xl"></i>
                 <span>Integrations</span>
             </a>
+            @endif
             <a href="#" @click="activeTab = 'settings'; searchQuery = ''" :class="activeTab === 'settings' ? 'nav-item-active text-white' : 'text-slate-400 hover:text-white hover:bg-white/5 border border-transparent hover:border-white/5'" class="flex items-center space-x-3 px-4 py-2.5 rounded-xl font-medium transition-all duration-200">
                 <i class="ph ph-gear text-xl"></i>
                 <span>Settings</span>
@@ -290,18 +445,21 @@ x-init="
         <div class="border-t border-white/10 p-4">
             <div class="flex items-center justify-between cursor-pointer group px-2 py-1 rounded-lg hover:bg-white/5 transition">
                 <div class="flex items-center space-x-3">
-                    <img src="https://ui-avatars.com/api/?name={{ urlencode($currentUser->name ?? 'Rizky Pratama') }}&background=bfdbfe&color=1e3a8a" alt="User" class="w-9 h-9 rounded-full ring-2 ring-transparent group-hover:ring-blue-500 transition-all">
+                    <img src="https://ui-avatars.com/api/?name={{ urlencode($currentUser->name) }}&background=bfdbfe&color=1e3a8a" alt="User" class="w-9 h-9 rounded-full ring-2 ring-transparent group-hover:ring-blue-500 transition-all">
                     <div>
-                        <p class="text-sm font-semibold text-white">{{ $currentUser->name ?? 'Rizky Pratama' }}</p>
-                        <p class="text-xs text-slate-400">Administrator</p>
+                        <p class="text-sm font-semibold text-white">{{ $currentUser->name }}</p>
+                        <p class="text-xs text-slate-400">{{ $currentUser->role === 'admin' ? 'Administrator' : 'Staff Member' }}</p>
                     </div>
                 </div>
                 <i class="ph ph-caret-down text-slate-400"></i>
             </div>
-            <a href="#" class="mt-4 flex items-center space-x-2 text-slate-400 hover:text-white px-2 py-1 transition-colors text-sm font-medium">
+            <a href="#" onclick="event.preventDefault(); document.getElementById('logout-form').submit();" class="mt-4 flex items-center space-x-2 text-slate-400 hover:text-white px-2 py-1 transition-colors text-sm font-medium">
                 <i class="ph ph-sign-out text-lg"></i>
                 <span>Logout</span>
             </a>
+            <form id="logout-form" action="/logout" method="POST" class="hidden">
+                @csrf
+            </form>
         </div>
     </aside>
 
@@ -363,14 +521,14 @@ x-init="
                             </div>
                             <div>
                                 <p class="text-[0.75rem] font-semibold tracking-wider text-slate-400 uppercase font-outfit">Total Documents</p>
-                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit">{{ $totalDocs }}</h3>
+                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit" x-text="stats.totalDocs">{{ $totalDocs }}</h3>
                             </div>
                         </div>
                         <div class="mt-4 flex items-center text-xs relative z-10 justify-between">
                             <span class="flex items-center text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
                                 <i class="ph-bold ph-arrow-up mr-0.5 font-outfit"></i>18%
                             </span>
-                            <span class="text-slate-400 font-medium">dari bulan lalu</span>
+                            <span class="text-slate-400 font-medium" x-text="getFilterSubtext()">dari bulan lalu</span>
                         </div>
                         <!-- Mini Chart (Simulated) -->
                         <div class="absolute bottom-0 left-0 right-0 h-10 opacity-30">
@@ -389,14 +547,14 @@ x-init="
                             </div>
                             <div>
                                 <p class="text-[0.75rem] font-semibold tracking-wider text-slate-400 uppercase font-outfit">Signed Documents</p>
-                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit">{{ $signedDocs }}</h3>
+                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit" x-text="stats.signedDocs">{{ $signedDocs }}</h3>
                             </div>
                         </div>
                         <div class="mt-4 flex items-center text-xs relative z-10 justify-between">
                             <span class="flex items-center text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
                                 <i class="ph-bold ph-arrow-up mr-0.5 font-outfit"></i>22%
                             </span>
-                            <span class="text-slate-400 font-medium">dari bulan lalu</span>
+                            <span class="text-slate-400 font-medium" x-text="getFilterSubtext()">dari bulan lalu</span>
                         </div>
                         <div class="absolute bottom-0 left-0 right-0 h-10 opacity-30">
                             <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-full h-full text-emerald-500/10 fill-current stroke-emerald-500/30 stroke-[0.75px]">
@@ -414,14 +572,14 @@ x-init="
                             </div>
                             <div>
                                 <p class="text-[0.75rem] font-semibold tracking-wider text-slate-400 uppercase font-outfit">Active Certificates</p>
-                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit">{{ $activeCerts }}</h3>
+                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit" x-text="stats.activeCerts">{{ $activeCerts }}</h3>
                             </div>
                         </div>
                         <div class="mt-4 flex items-center text-xs relative z-10 justify-between">
                             <span class="flex items-center text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full font-bold">
                                 <i class="ph-bold ph-arrow-up mr-0.5 font-outfit"></i>12%
                             </span>
-                            <span class="text-slate-400 font-medium">dari bulan lalu</span>
+                            <span class="text-slate-400 font-medium" x-text="getFilterSubtext()">dari bulan lalu</span>
                         </div>
                         <div class="absolute bottom-0 left-0 right-0 h-10 opacity-30">
                             <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-full h-full text-violet-500/10 fill-current stroke-violet-500/30 stroke-[0.75px]">
@@ -439,14 +597,14 @@ x-init="
                             </div>
                             <div>
                                 <p class="text-[0.75rem] font-semibold tracking-wider text-slate-400 uppercase font-outfit">Expired Certificates</p>
-                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit">{{ $expiredCerts }}</h3>
+                                <h3 class="text-3xl font-extrabold text-slate-900 mt-1 tracking-tight font-outfit" x-text="stats.expiredCerts">{{ $expiredCerts }}</h3>
                             </div>
                         </div>
                         <div class="mt-4 flex items-center text-xs relative z-10 justify-between">
                             <span class="flex items-center text-red-600 bg-red-50 px-2 py-0.5 rounded-full font-bold">
                                 <i class="ph-bold ph-arrow-down mr-0.5 font-outfit"></i>2
                             </span>
-                            <span class="text-slate-400 font-medium">dari bulan lalu</span>
+                            <span class="text-slate-400 font-medium" x-text="getFilterSubtext()">dari bulan lalu</span>
                         </div>
                         <div class="absolute bottom-0 left-0 right-0 h-10 opacity-30">
                             <svg viewBox="0 0 100 20" preserveAspectRatio="none" class="w-full h-full text-rose-500/10 fill-current stroke-rose-500/30 stroke-[0.75px]">
@@ -463,10 +621,12 @@ x-init="
                     <div class="lg:col-span-2 glass-card rounded-2xl p-6">
                         <div class="flex items-center justify-between mb-6">
                             <h3 class="font-bold text-slate-800">Documents Overview</h3>
-                            <div class="flex items-center space-x-2 text-sm text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 cursor-pointer hover:bg-slate-100">
-                                <span>This Month</span>
-                                <i class="ph ph-caret-down"></i>
-                            </div>
+                            <select x-model="timeFilter" @change="updateDashboard()" class="text-sm text-slate-500 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-100 focus:outline-none focus:ring-1 focus:ring-indigo-500 hover:bg-slate-100 cursor-pointer">
+                                <option value="today">Hari Ini</option>
+                                <option value="week">Minggu Ini</option>
+                                <option value="month">Bulan Ini</option>
+                                <option value="year">Tahun Ini</option>
+                            </select>
                         </div>
                         
                         <div class="flex flex-col md:flex-row gap-8 items-center h-64">
@@ -474,7 +634,7 @@ x-init="
                             <div class="relative w-48 h-48 flex-shrink-0">
                                 <canvas id="donutChart"></canvas>
                                 <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                                    <span class="text-2xl font-bold text-slate-800">{{ $totalDocs }}</span>
+                                    <span class="text-2xl font-bold text-slate-800" x-text="stats.totalDocs">{{ $totalDocs }}</span>
                                     <span class="text-xs text-slate-500 font-medium">Total</span>
                                 </div>
                             </div>
@@ -485,22 +645,22 @@ x-init="
                                     <div class="flex items-center text-sm">
                                         <span class="w-2.5 h-2.5 rounded-full bg-indigo-500 mr-2 shadow-sm shadow-indigo-500/20"></span>
                                         <span class="text-slate-500 font-medium w-16">Signed</span>
-                                        <span class="font-bold text-slate-800 font-outfit">{{ $signedDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($signedDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
+                                        <span class="font-bold text-slate-800 font-outfit" x-text="stats.signedDocs + ' (' + Math.round((stats.signedDocs / (stats.totalDocs || 1)) * 100) + '%)'">{{ $signedDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($signedDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
                                     </div>
                                     <div class="flex items-center text-sm">
                                         <span class="w-2.5 h-2.5 rounded-full bg-amber-500 mr-2 shadow-sm shadow-amber-500/20"></span>
                                         <span class="text-slate-500 font-medium w-16">Pending</span>
-                                        <span class="font-bold text-slate-800 font-outfit">{{ $pendingDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($pendingDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
+                                        <span class="font-bold text-slate-800 font-outfit" x-text="stats.pendingDocs + ' (' + Math.round((stats.pendingDocs / (stats.totalDocs || 1)) * 100) + '%)'">{{ $pendingDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($pendingDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
                                     </div>
                                     <div class="flex items-center text-sm">
                                         <span class="w-2.5 h-2.5 rounded-full bg-slate-400 mr-2 shadow-sm shadow-slate-400/20"></span>
                                         <span class="text-slate-500 font-medium w-16">Draft</span>
-                                        <span class="font-bold text-slate-800 font-outfit">{{ $draftDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($draftDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
+                                        <span class="font-bold text-slate-800 font-outfit" x-text="stats.draftDocs + ' (' + Math.round((stats.draftDocs / (stats.totalDocs || 1)) * 100) + '%)'">{{ $draftDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($draftDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
                                     </div>
                                     <div class="flex items-center text-sm">
                                         <span class="w-2.5 h-2.5 rounded-full bg-rose-500 mr-2 shadow-sm shadow-rose-500/20"></span>
                                         <span class="text-slate-500 font-medium w-16">Rejected</span>
-                                        <span class="font-bold text-slate-800 font-outfit">{{ $rejectedDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($rejectedDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
+                                        <span class="font-bold text-slate-800 font-outfit" x-text="stats.rejectedDocs + ' (' + Math.round((stats.rejectedDocs / (stats.totalDocs || 1)) * 100) + '%)'">{{ $rejectedDocs }} <span class="text-slate-400 font-normal text-xs">({{ round(($rejectedDocs / ($totalDocs ?: 1)) * 100) }}%)</span></span>
                                     </div>
                                 </div>
                                 <div class="h-32 w-full mt-auto">
@@ -1218,6 +1378,82 @@ x-init="
                     </div>
                 </div>
 
+                <!-- PANEL: Teams -->
+                <div x-show="activeTab === 'teams'" class="space-y-6" x-transition style="display: none;">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h2 class="text-2xl font-bold text-slate-800 font-outfit">Teams & Collaboration</h2>
+                            <p class="text-sm text-slate-500 mt-0.5">Kelola tim kolaborasi, bagikan dokumen, dan atur anggota tim secara real-time.</p>
+                        </div>
+                        <button @click="createTeamModal = true" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2.5 rounded-full font-semibold flex items-center space-x-2 transition-all shadow-lg shadow-indigo-500/20 hover:shadow-indigo-500/35">
+                            <i class="ph ph-plus text-lg"></i>
+                            <span>Create Team</span>
+                        </button>
+                    </div>
+
+                    <!-- Teams Cards Grid -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        @foreach($allTeams as $team)
+                            <div class="glass-card rounded-2xl p-6 hover-lift relative overflow-hidden border border-white/60 flex flex-col justify-between h-full">
+                                <div>
+                                    <div class="flex items-center justify-between mb-4">
+                                        <div class="flex items-center space-x-3">
+                                            <div class="p-3 bg-indigo-50 text-indigo-600 rounded-xl border border-indigo-100/40">
+                                                <i class="ph-bold ph-users-three text-xl"></i>
+                                            </div>
+                                            <div>
+                                                <h4 class="font-bold text-slate-800 text-base leading-snug">{{ $team->name }}</h4>
+                                                <p class="text-xs text-slate-400 font-medium font-outfit">Dibuat oleh {{ $team->creator->name ?? 'System' }}</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="text-sm text-slate-500 line-clamp-2 leading-relaxed mb-6">{{ $team->description ?: 'Tidak ada deskripsi.' }}</p>
+                                </div>
+                                
+                                <div class="space-y-4 pt-4 border-t border-slate-100">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-xs text-slate-400 font-semibold font-outfit uppercase tracking-wider">Members ({{ $team->members->count() }})</span>
+                                        <div class="flex -space-x-1.5">
+                                            @foreach($team->members->take(5) as $m)
+                                                <img class="w-6.5 h-6.5 rounded-full border-2 border-white shadow-sm ring-1 ring-slate-150" src="https://ui-avatars.com/api/?name={{ urlencode($m->name) }}&background=bfdbfe&color=1e3a8a&bold=true" title="{{ $m->name }} ({{ $m->pivot->role }})" alt="Member">
+                                            @endforeach
+                                            @if($team->members->count() > 5)
+                                                <div class="w-6.5 h-6.5 rounded-full border-2 border-white bg-slate-100 ring-1 ring-slate-100 flex items-center justify-center text-[9px] font-bold text-slate-500 shadow-sm">+{{ $team->members->count() - 5 }}</div>
+                                            @endif
+                                        </div>
+                                    </div>
+
+                                    <div class="flex items-center justify-between space-x-2 pt-2">
+                                        <button @click="selectedTeam = allTeamsList.find(t => t.id === {{ $team->id }}); manageTeamMembersModal = true;" class="flex-1 bg-slate-50 hover:bg-slate-100 text-slate-700 font-bold py-2 px-3 rounded-xl border border-slate-200 text-xs transition-colors flex items-center justify-center space-x-1">
+                                            <i class="ph ph-user-list text-sm"></i>
+                                            <span>Manage Members</span>
+                                        </button>
+                                        <form action="/teams/{{ $team->id }}" method="POST" class="inline" onsubmit="return confirm('Apakah Anda yakin ingin menghapus tim ini?')">
+                                            @csrf
+                                            @method('DELETE')
+                                            <button type="submit" class="bg-rose-50 hover:bg-rose-100 text-rose-600 font-bold p-2.5 rounded-xl border border-rose-100 text-xs transition-colors" title="Delete Team">
+                                                <i class="ph ph-trash text-sm"></i>
+                                            </button>
+                                        </form>
+                                    </div>
+                                </div>
+                            </div>
+                        @endforeach
+                        
+                        @if($allTeams->isEmpty())
+                            <div class="col-span-2 glass-card rounded-2xl p-12 text-center border border-white/60">
+                                <i class="ph ph-users-three text-5xl text-slate-300 mb-3"></i>
+                                <h3 class="font-bold text-slate-700 text-lg">Belum Ada Tim</h3>
+                                <p class="text-sm text-slate-400 mt-1 mb-4">Buat tim kolaborasi pertama untuk membagikan akses dokumen dan kelola bersama.</p>
+                                <button @click="createTeamModal = true" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-full font-semibold inline-flex items-center space-x-1.5 transition-all shadow-md shadow-indigo-500/20">
+                                    <i class="ph ph-plus text-sm"></i>
+                                    <span>Create Team</span>
+                                </button>
+                            </div>
+                        @endif
+                    </div>
+                </div>
+
                 <!-- PANEL: Audit Trail -->
                 <div x-show="activeTab === 'audit'" class="space-y-6" x-transition style="display: none;">
                     <div>
@@ -1266,6 +1502,159 @@ x-init="
                                     </div>
                                 </div>
                             @endforeach
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PANEL: Integrations -->
+                <div x-show="activeTab === 'integrations'" class="space-y-6" x-transition style="display: none;">
+                    <div>
+                        <h2 class="text-2xl font-bold text-slate-800 font-outfit">API & Integrations</h2>
+                        <p class="text-sm text-slate-500 mt-0.5">Integrasikan platform digital signature LEXA ke dalam aplikasi Anda menggunakan REST API.</p>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <!-- Left 2 Cols: API Keys Management -->
+                        <div class="lg:col-span-2 space-y-6">
+                            <div class="glass-card rounded-2xl p-6">
+                                <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                                    <h3 class="font-bold text-slate-800 font-outfit text-base">API Keys</h3>
+                                    <!-- Simple Form to Trigger Modal -->
+                                    <form @submit.prevent="apiKeyModal = true; generatedKey = ''" class="inline">
+                                        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center space-x-1 transition-all shadow-md shadow-indigo-500/20">
+                                            <i class="ph ph-plus"></i>
+                                            <span>Create API Key</span>
+                                        </button>
+                                    </form>
+                                </div>
+
+                                <div class="overflow-x-auto">
+                                    <table class="w-full text-sm text-left border-collapse">
+                                        <thead class="text-xs text-slate-400 bg-slate-50/50 border-b border-slate-200/60 uppercase">
+                                            <tr>
+                                                <th class="px-4 py-3 font-semibold rounded-l-xl">Name</th>
+                                                <th class="px-4 py-3 font-semibold">API Key</th>
+                                                <th class="px-4 py-3 font-semibold">Status</th>
+                                                <th class="px-4 py-3 font-semibold">Last Used</th>
+                                                <th class="px-4 py-3 font-semibold text-center rounded-r-xl">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody class="divide-y divide-slate-100">
+                                            @foreach($allApiKeys as $key)
+                                                <tr class="custom-row">
+                                                    <td class="px-4 py-3.5 font-bold text-slate-800 text-xs">
+                                                        {{ $key->name }}
+                                                    </td>
+                                                    <td class="px-4 py-3.5 text-xs font-mono text-slate-500">
+                                                        <code>{{ substr($key->key, 0, 12) }}••••••••{{ substr($key->key, -4) }}</code>
+                                                    </td>
+                                                    <td class="px-4 py-3.5">
+                                                        <form action="/api-keys/{{ $key->id }}/toggle" method="POST" class="inline">
+                                                            @csrf
+                                                            <button type="submit" class="inline-flex items-center">
+                                                                <span class="relative inline-flex items-center cursor-pointer">
+                                                                    <!-- Custom Toggle Styling -->
+                                                                    <span class="w-8 h-4 rounded-full transition-colors duration-200 ease-in-out {{ $key->status === 'active' ? 'bg-indigo-600' : 'bg-slate-200' }}"></span>
+                                                                    <span class="absolute left-0.5 top-0.5 bg-white w-3 h-3 rounded-full transition-transform duration-200 ease-in-out transform {{ $key->status === 'active' ? 'translate-x-4' : 'translate-x-0' }}"></span>
+                                                                </span>
+                                                                <span class="ml-2 text-xs font-bold font-outfit uppercase tracking-wider {{ $key->status === 'active' ? 'text-indigo-600' : 'text-slate-400' }}">
+                                                                    {{ ucfirst($key->status) }}
+                                                                </span>
+                                                            </button>
+                                                        </form>
+                                                    </td>
+                                                    <td class="px-4 py-3.5 text-xs text-slate-400 font-medium">
+                                                        {{ $key->last_used_at ? $key->last_used_at->translatedFormat('d M Y, H:i') . ' WIB' : 'Never' }}
+                                                    </td>
+                                                    <td class="px-4 py-3.5 text-center">
+                                                        <form action="/api-keys/{{ $key->id }}" method="POST" class="inline" onsubmit="return confirm('Apakah Anda yakin ingin menghapus API Key ini?')">
+                                                            @csrf
+                                                            @method('DELETE')
+                                                            <button type="submit" class="text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-2 rounded-lg transition-colors" title="Delete API Key">
+                                                                <i class="ph ph-trash text-sm"></i>
+                                                            </button>
+                                                        </form>
+                                                    </td>
+                                                </tr>
+                                            @endforeach
+                                            @if($allApiKeys->isEmpty())
+                                                <tr>
+                                                    <td colspan="5" class="px-4 py-8 text-center text-xs text-slate-400">
+                                                        Belum ada API Key aktif. Silakan buat API Key baru untuk memulai integrasi.
+                                                    </td>
+                                                </tr>
+                                            @endif
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Right Col: API Specs Documentation -->
+                        <div class="glass-card rounded-2xl p-6 flex flex-col h-full bg-slate-900 border border-slate-800 text-slate-100">
+                            <div class="flex items-center space-x-2 mb-4">
+                                <i class="ph-bold ph-code text-indigo-400 text-xl"></i>
+                                <h3 class="font-bold font-outfit text-base">API Documentation</h3>
+                            </div>
+                            
+                            <!-- Language Switcher Tabs -->
+                            <div class="flex space-x-1 bg-slate-800 p-1 rounded-xl mb-4 text-xs font-semibold">
+                                <button @click="apiDocTab = 'curl'" :class="apiDocTab === 'curl' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="flex-1 py-1.5 rounded-lg transition-all">cURL</button>
+                                <button @click="apiDocTab = 'node'" :class="apiDocTab === 'node' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="flex-1 py-1.5 rounded-lg transition-all">Node.js</button>
+                                <button @click="apiDocTab = 'python'" :class="apiDocTab === 'python' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'" class="flex-1 py-1.5 rounded-lg transition-all">Python</button>
+                            </div>
+
+                            <!-- Code Blocks -->
+                            <div class="flex-1 overflow-y-auto space-y-4 pr-1">
+                                <div x-show="apiDocTab === 'curl'" class="space-y-3" x-transition>
+                                    <p class="text-xs text-slate-400 font-medium leading-relaxed">Panggil API untuk memverifikasi dokumen secara terprogram:</p>
+                                    <pre class="bg-black/50 p-3 rounded-xl text-[10px] font-mono overflow-x-auto text-emerald-400 leading-normal border border-slate-800">curl -X POST http://localhost:8000/api/v1/verify \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"file_name": "Kontrak.pdf"}'</pre>
+                                </div>
+                                
+                                <div x-show="apiDocTab === 'node'" class="space-y-3" x-transition style="display: none;">
+                                    <p class="text-xs text-slate-400 font-medium leading-relaxed">Contoh fetch request di Node.js:</p>
+                                    <pre class="bg-black/50 p-3 rounded-xl text-[10px] font-mono overflow-x-auto text-emerald-400 leading-normal border border-slate-800">const axios = require('axios');
+
+axios.post('http://localhost:8000/api/v1/verify', {
+  file_name: 'Kontrak.pdf'
+}, {
+  headers: {
+    'Authorization': 'Bearer YOUR_API_KEY'
+  }
+})
+.then(res => console.log(res.data))
+.catch(err => console.error(err));</pre>
+                                </div>
+
+                                <div x-show="apiDocTab === 'python'" class="space-y-3" x-transition style="display: none;">
+                                    <p class="text-xs text-slate-400 font-medium leading-relaxed">Contoh request menggunakan library Python requests:</p>
+                                    <pre class="bg-black/50 p-3 rounded-xl text-[10px] font-mono overflow-x-auto text-emerald-400 leading-normal border border-slate-800">import requests
+
+url = "http://localhost:8000/api/v1/verify"
+headers = {
+    "Authorization": "Bearer YOUR_API_KEY"
+}
+payload = {
+    "file_name": "Kontrak.pdf"
+}
+
+response = requests.post(url, json=payload, headers=headers)
+print(response.json())</pre>
+                                </div>
+
+                                <div class="border-t border-slate-800 pt-3.5 space-y-2.5">
+                                    <div class="flex items-center space-x-2 text-xs text-indigo-400 font-bold">
+                                        <i class="ph ph-info"></i>
+                                        <span>Authentication</span>
+                                    </div>
+                                    <p class="text-[11px] text-slate-400 leading-relaxed">
+                                        Semua request API membutuhkan header <code>Authorization: Bearer &lt;YOUR_API_KEY&gt;</code>. Key yang dinonaktifkan akan mengembalikan respon <code>401 Unauthorized</code>.
+                                    </p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1321,7 +1710,7 @@ x-init="
         document.addEventListener("DOMContentLoaded", () => {
             // Main Donut Chart
             const ctxDonut = document.getElementById('donutChart').getContext('2d');
-            new Chart(ctxDonut, {
+            window.donutChartInstance = new Chart(ctxDonut, {
                 type: 'doughnut',
                 data: {
                     labels: ['Signed', 'Pending', 'Draft', 'Rejected'],
@@ -1351,7 +1740,7 @@ x-init="
 
             // Mini Donut Chart (Certificates)
             const ctxCertDonut = document.getElementById('certDonutChart').getContext('2d');
-            new Chart(ctxCertDonut, {
+            window.certDonutChartInstance = new Chart(ctxCertDonut, {
                 type: 'doughnut',
                 data: {
                     labels: ['Valid', 'Expiring Soon', 'Expired'],
@@ -1376,7 +1765,7 @@ x-init="
             gradient.addColorStop(0, 'rgba(99, 102, 241, 0.22)');
             gradient.addColorStop(1, 'rgba(99, 102, 241, 0)');
 
-            new Chart(ctxLine, {
+            window.lineChartInstance = new Chart(ctxLine, {
                 type: 'line',
                 data: {
                     labels: ['1 Jun', '6 Jun', '11 Jun', '16 Jun', '21 Jun'],
@@ -1526,6 +1915,154 @@ x-init="
                     Issue Certificate
                 </button>
             </form>
+        </div>
+    </div>
+
+    <!-- Modal: Create Team -->
+    <div x-show="createTeamModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" style="display: none;" x-transition>
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100" @click.away="createTeamModal = false">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-bold text-slate-800 font-outfit">Create New Team</h3>
+                <button @click="createTeamModal = false" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-50"><i class="ph ph-x text-lg"></i></button>
+            </div>
+            <form action="/teams" method="POST" class="space-y-4">
+                @csrf
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Team Name</label>
+                    <input type="text" name="name" x-model="teamName" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g. Finance Division" required>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Description (Optional)</label>
+                    <textarea name="description" x-model="teamDescription" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 h-24" placeholder="Brief explanation of the team's scope or purpose..."></textarea>
+                </div>
+                <button type="submit" :disabled="!teamName" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-all shadow-md shadow-indigo-500/20">
+                    Create Team
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Modal: Manage Team Members -->
+    <div x-show="manageTeamMembersModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" style="display: none;" x-transition>
+        <div class="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-100" @click.away="manageTeamMembersModal = false">
+            <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+                <div>
+                    <h3 class="text-lg font-bold text-slate-800 font-outfit" x-text="'Manage Members - ' + selectedTeam.name"></h3>
+                    <p class="text-xs text-slate-400 mt-0.5" x-text="selectedTeam.description || 'Tidak ada deskripsi.'"></p>
+                </div>
+                <button @click="manageTeamMembersModal = false" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-50"><i class="ph ph-x text-lg"></i></button>
+            </div>
+            
+            <div class="space-y-6">
+                <!-- Add Member Form -->
+                <form :action="'/teams/' + selectedTeam.id + '/members'" method="POST" class="bg-slate-50 p-4 rounded-2xl border border-slate-150 space-y-3">
+                    @csrf
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Select User</label>
+                            <select name="user_id" x-model="newMemberId" class="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs text-slate-700 focus:outline-none" required>
+                                <option value="">-- Pilih User --</option>
+                                <template x-for="user in allUsersList.filter(u => !selectedTeam.members.some(m => m.id === u.id))" :key="user.id">
+                                    <option :value="user.id" x-text="user.name + ' (' + user.email + ')'"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Team Role</label>
+                            <select name="role" x-model="newMemberRole" class="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs text-slate-700 focus:outline-none" required>
+                                <option value="Member">Member</option>
+                                <option value="Leader">Leader</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" :disabled="!newMemberId" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-1.5 rounded-xl text-xs transition-all shadow-sm">
+                        Add to Team
+                    </button>
+                </form>
+
+                <!-- Current Members List -->
+                <div>
+                    <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2" x-text="'Current Members (' + selectedTeam.members.length + ')'"></h4>
+                    <div class="divide-y divide-slate-100 max-h-56 overflow-y-auto pr-1">
+                        <template x-for="member in selectedTeam.members" :key="member.id">
+                            <div class="flex items-center justify-between py-2.5">
+                                <div class="flex items-center space-x-2.5">
+                                    <img class="w-8 h-8 rounded-full border border-slate-200" :src="'https://ui-avatars.com/api/?name=' + encodeURIComponent(member.name) + '&background=bfdbfe&color=1e3a8a&bold=true'" alt="Member Avatar">
+                                    <div>
+                                        <p class="text-xs font-bold text-slate-800" x-text="member.name"></p>
+                                        <p class="text-[10px] text-slate-400 font-mono" x-text="member.email"></p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <span class="text-[9px] font-bold px-2 py-0.5 rounded-md" :class="member.pivot.role === 'Leader' ? 'bg-indigo-50 text-indigo-700 border border-indigo-100' : 'bg-slate-50 text-slate-600 border border-slate-100'" x-text="member.pivot.role"></span>
+                                    
+                                    <!-- Delete member form -->
+                                    <form :action="'/teams/' + selectedTeam.id + '/members/' + member.id" method="POST" class="inline" onsubmit="return confirm('Apakah Anda yakin ingin mengeluarkan anggota ini dari tim?')">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" class="text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 p-1.5 rounded-lg border border-rose-100 transition-colors" title="Remove Member">
+                                            <i class="ph ph-user-minus text-sm"></i>
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="selectedTeam.members.length === 0">
+                            <p class="text-xs text-slate-400 text-center py-4">Belum ada anggota di tim ini.</p>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Create / Display API Key -->
+    <div x-show="apiKeyModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm" style="display: none;" x-transition>
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100" @click.away="apiKeyModal = false">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-bold text-slate-800 font-outfit" x-text="generatedKey ? 'API Token Generated' : 'Create API Key'"></h3>
+                <button @click="apiKeyModal = false; generatedKey = ''" class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-50"><i class="ph ph-x text-lg"></i></button>
+            </div>
+            
+            <!-- Step 1: Input name to create key -->
+            <template x-if="!generatedKey">
+                <form action="/api-keys" method="POST" class="space-y-4">
+                    @csrf
+                    <div>
+                        <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Key Description / Name</label>
+                        <input type="text" name="name" x-model="newApiKeyName" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="e.g., Prod Integration Server" required>
+                    </div>
+                    <button type="submit" :disabled="!newApiKeyName" class="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-bold py-2.5 rounded-xl transition-all shadow-md shadow-indigo-500/20">
+                        Generate Token
+                    </button>
+                </form>
+            </template>
+
+            <!-- Step 2: Show generated key (one-time display) -->
+            <template x-if="generatedKey">
+                <div class="space-y-4">
+                    <div class="bg-amber-50 border border-amber-200 p-3.5 rounded-2xl text-xs text-amber-800 leading-relaxed flex items-start space-x-2.5">
+                        <i class="ph ph-warning-octagon text-xl text-amber-600 flex-shrink-0 mt-0.5"></i>
+                        <span>
+                            <strong>Perhatian:</strong> Salin token API di bawah ini sekarang. Demi keamanan, token ini tidak akan ditampilkan kembali setelah Anda menutup modal ini.
+                        </span>
+                    </div>
+
+                    <div class="relative bg-slate-50 border border-slate-200 rounded-2xl p-3 flex items-center justify-between">
+                        <span class="text-xs font-mono font-bold text-slate-700 select-all truncate mr-2" x-text="generatedKey"></span>
+                        <button @click="
+                            navigator.clipboard.writeText(generatedKey); 
+                            showToast('Token berhasil disalin ke clipboard!', 'success');
+                        " class="bg-indigo-50 hover:bg-indigo-100 border border-indigo-150 text-indigo-600 font-bold p-2 rounded-xl text-xs flex items-center justify-center transition-colors" title="Copy to clipboard">
+                            <i class="ph ph-copy text-base"></i>
+                        </button>
+                    </div>
+
+                    <button @click="apiKeyModal = false; generatedKey = ''" class="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-2.5 rounded-xl transition-all">
+                        Saya Sudah Menyalin Key Ini
+                    </button>
+                </div>
+            </template>
         </div>
     </div>
 

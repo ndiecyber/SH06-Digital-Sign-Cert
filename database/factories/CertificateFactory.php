@@ -28,12 +28,14 @@ class CertificateFactory extends Factory
             'PT GoTo Gojek Tokopedia Tbk',
         ];
 
+        $issuedAt = fake()->dateTimeBetween('-1 year', 'now');
         return [
             'name' => fake()->randomElement($holders) . ' - ' . fake()->randomElement($certTypes),
             'holder' => fake()->randomElement($holders),
             'status' => fake()->randomElement(['valid', 'expiring_soon', 'expired']),
             'valid_until' => fake()->dateTimeBetween('now', '+1 year'),
-            'issued_at' => fake()->dateTimeBetween('-1 year', 'now'),
+            'issued_at' => $issuedAt,
+            'created_at' => $issuedAt,
         ];
     }
 }
