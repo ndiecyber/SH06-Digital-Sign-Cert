@@ -139,208 +139,288 @@
         window.allDocsList = @json($allDocuments);
         window.allCertsList = @json($allCertificates);
     </script>
-</head>
-<body class="text-slate-800 flex h-screen overflow-hidden relative dot-pattern" x-data="{ 
-    sidebarOpen: true, 
-    searchQuery: '', 
-    filterStatus: 'all',
-    activeTab: (new URLSearchParams(window.location.search)).get('tab') || 'dashboard',
-    uploadModal: false,
-    signatureModal: false,
-    certModal: false,
-    verifyModal: false,
-    createTeamModal: false,
-    manageTeamMembersModal: false,
-    toastShow: false,
-    toastMessage: '',
-    toastType: 'success',
-    fileName: '',
-    signerName: '',
-    certName: '',
-    certHolder: '',
-    verifying: false,
-    verified: false,
-    verifyFileName: '',
-    verifyDetails: null,
-    selectedTeam: { id: null, name: '', description: '', members: [] },
-    teamName: '',
-    teamDescription: '',
-    newMemberId: '',
-    newMemberRole: 'Member',
-    allUsersList: window.allUsersList,
-    allTeamsList: window.allTeamsList,
-    allApiKeysList: window.allApiKeysList,
-    apiKeyModal: false,
-    newApiKeyName: '',
-    generatedKey: '{{ session('generated_api_key') ?? '' }}',
-    apiDocTab: 'curl',
-    timeFilter: 'month',
-    stats: {
-        totalDocs: {{ $totalDocs }},
-        signedDocs: {{ $signedDocs }},
-        pendingDocs: {{ $pendingDocs }},
-        draftDocs: {{ $draftDocs }},
-        rejectedDocs: {{ $rejectedDocs }},
-        totalCerts: {{ $activeCerts }},
-        activeCerts: {{ $activeCerts }},
-        validCerts: {{ $validCerts }},
-        expiringSoonCerts: {{ $expiringSoonCerts }},
-        expiredCerts: {{ $expiredCerts }},
-    },
-    getFilterSubtext() {
-        if (this.timeFilter === 'today') return 'hari ini';
-        if (this.timeFilter === 'week') return 'dari minggu lalu';
-        if (this.timeFilter === 'month') return 'dari bulan lalu';
-        if (this.timeFilter === 'year') return 'dari tahun lalu';
-        return 'dari bulan lalu';
-    },
-    updateDashboard() {
-        const refDate = new Date();
-        const isToday = (dateStr) => {
-            const d = new Date(dateStr);
-            return d.toDateString() === refDate.toDateString();
-        };
-        const isThisWeek = (dateStr) => {
-            const d = new Date(dateStr);
-            const diffTime = Math.abs(refDate - d);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-            return diffDays <= 7;
-        };
-        const isThisMonth = (dateStr) => {
-            const d = new Date(dateStr);
-            return d.getMonth() === refDate.getMonth() && d.getFullYear() === refDate.getFullYear();
-        };
-        const isThisYear = (dateStr) => {
-            const d = new Date(dateStr);
-            return d.getFullYear() === refDate.getFullYear();
-        };
-        const filterFn = (dateStr) => {
-            if (this.timeFilter === 'today') return isToday(dateStr);
-            if (this.timeFilter === 'week') return isThisWeek(dateStr);
-            if (this.timeFilter === 'month') return isThisMonth(dateStr);
-            if (this.timeFilter === 'year') return isThisYear(dateStr);
-            return true;
-        };
-        const filteredDocs = (window.allDocsList || []).filter(doc => filterFn(doc.created_at));
-        const filteredCerts = (window.allCertsList || []).filter(cert => filterFn(cert.created_at || cert.issued_at));
+    <script>
+        document.addEventListener('alpine:init', () => {
+            Alpine.data('dashboardState', () => ({
+                sidebarOpen: true,
+                searchQuery: '',
+                filterStatus: 'all',
+                activeTab: (new URLSearchParams(window.location.search)).get('tab') || 'dashboard',
+                uploadModal: false,
+                signatureModal: false,
+                certModal: false,
+                verifyModal: false,
+                createTeamModal: false,
+                manageTeamMembersModal: false,
+                toastShow: false,
+                toastMessage: '',
+                toastType: 'success',
+                fileName: '',
+                signerName: '',
+                certName: '',
+                certHolder: '',
+                verifying: false,
+                verified: false,
+                verifyFileName: '',
+                verifyDetails: null,
+                selectedTeam: { id: null, name: '', description: '', members: [] },
+                teamName: '',
+                teamDescription: '',
+                newMemberId: '',
+                newMemberRole: 'Member',
+                allUsersList: window.allUsersList,
+                allTeamsList: window.allTeamsList,
+                allApiKeysList: window.allApiKeysList,
+                apiKeyModal: false,
+                newApiKeyName: '',
+                generatedKey: '{{ session('generated_api_key') ?? '' }}',
+                apiDocTab: 'curl',
+                timeFilter: 'month',
+                upgradePlanModal: false,
+                billingPeriod: 'monthly',
+                checkoutModal: false,
+                selectedPlanForCheckout: '',
+                paymentMethod: 'cc',
+                processingPayment: false,
+                paymentSuccess: false,
+                currentPlan: '{{ $currentUser->plan ?? 'free' }}',
+                showNotifications: false,
+                notificationsList: @json($notifications),
+                unreadNotifsCount: {{ $unreadNotifsCount }},
+                
+                markAsRead(notif) {
+                    if (notif.is_read) {
+                        if (notif.link) {
+                            this.activeTab = notif.link;
+                            this.showNotifications = false;
+                        }
+                        return;
+                    }
+                    fetch(`/notifications/${notif.id}/read`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        }
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            notif.is_read = true;
+                            this.unreadNotifsCount = Math.max(0, this.unreadNotifsCount - 1);
+                            if (notif.link) {
+                                this.activeTab = notif.link;
+                                this.showNotifications = false;
+                            }
+                        }
+                    });
+                },
+                
+                markAllAsRead() {
+                    if (this.unreadNotifsCount === 0) return;
+                    fetch('/notifications/read-all', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+                        }
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.success) {
+                            this.notificationsList.forEach(n => n.is_read = true);
+                            this.unreadNotifsCount = 0;
+                            this.showToast('Semua notifikasi ditandai telah dibaca.', 'success');
+                        }
+                    });
+                },
+                
+                getRelativeTime(dateStr) {
+                    const date = new Date(dateStr);
+                    const now = new Date();
+                    const diffMs = now - date;
+                    const diffMins = Math.floor(diffMs / 60000);
+                    if (diffMins < 1) return 'Baru saja';
+                    if (diffMins < 60) return `${diffMins} menit yang lalu`;
+                    const diffHours = Math.floor(diffMins / 60);
+                    if (diffHours < 24) return `${diffHours} jam yang lalu`;
+                    const diffDays = Math.floor(diffHours / 24);
+                    return `${diffDays} hari yang lalu`;
+                },
+                
+                stats: {
+                    totalDocs: {{ $totalDocs }},
+                    signedDocs: {{ $signedDocs }},
+                    pendingDocs: {{ $pendingDocs }},
+                    draftDocs: {{ $draftDocs }},
+                    rejectedDocs: {{ $rejectedDocs }},
+                    totalCerts: {{ $activeCerts }},
+                    activeCerts: {{ $activeCerts }},
+                    validCerts: {{ $validCerts }},
+                    expiringSoonCerts: {{ $expiringSoonCerts }},
+                    expiredCerts: {{ $expiredCerts }},
+                },
+                
+                getFilterSubtext() {
+                    if (this.timeFilter === 'today') return 'hari ini';
+                    if (this.timeFilter === 'week') return 'dari minggu lalu';
+                    if (this.timeFilter === 'month') return 'dari bulan lalu';
+                    if (this.timeFilter === 'year') return 'dari tahun lalu';
+                    return 'dari bulan lalu';
+                },
+                
+                updateDashboard() {
+                    const refDate = new Date();
+                    const isToday = (dateStr) => {
+                        const d = new Date(dateStr);
+                        return d.toDateString() === refDate.toDateString();
+                    };
+                    const isThisWeek = (dateStr) => {
+                        const d = new Date(dateStr);
+                        const diffTime = Math.abs(refDate - d);
+                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                        return diffDays <= 7;
+                    };
+                    const isThisMonth = (dateStr) => {
+                        const d = new Date(dateStr);
+                        return d.getMonth() === refDate.getMonth() && d.getFullYear() === refDate.getFullYear();
+                    };
+                    const isThisYear = (dateStr) => {
+                        const d = new Date(dateStr);
+                        return d.getFullYear() === refDate.getFullYear();
+                    };
+                    const filterFn = (dateStr) => {
+                        if (this.timeFilter === 'today') return isToday(dateStr);
+                        if (this.timeFilter === 'week') return isThisWeek(dateStr);
+                        if (this.timeFilter === 'month') return isThisMonth(dateStr);
+                        if (this.timeFilter === 'year') return isThisYear(dateStr);
+                        return true;
+                    };
+                    const filteredDocs = (window.allDocsList || []).filter(doc => filterFn(doc.created_at));
+                    const filteredCerts = (window.allCertsList || []).filter(cert => filterFn(cert.created_at || cert.issued_at));
 
-        this.stats.totalDocs = filteredDocs.length;
-        this.stats.signedDocs = filteredDocs.filter(d => d.status === 'signed').length;
-        this.stats.pendingDocs = filteredDocs.filter(d => d.status === 'pending').length;
-        this.stats.draftDocs = filteredDocs.filter(d => d.status === 'draft').length;
-        this.stats.rejectedDocs = filteredDocs.filter(d => d.status === 'rejected').length;
+                    this.stats.totalDocs = filteredDocs.length;
+                    this.stats.signedDocs = filteredDocs.filter(d => d.status === 'signed').length;
+                    this.stats.pendingDocs = filteredDocs.filter(d => d.status === 'pending').length;
+                    this.stats.draftDocs = filteredDocs.filter(d => d.status === 'draft').length;
+                    this.stats.rejectedDocs = filteredDocs.filter(d => d.status === 'rejected').length;
 
-        this.stats.totalCerts = filteredCerts.length;
-        this.stats.activeCerts = filteredCerts.length;
-        this.stats.validCerts = filteredCerts.filter(c => c.status === 'valid').length;
-        this.stats.expiringSoonCerts = filteredCerts.filter(c => c.status === 'expiring_soon').length;
-        this.stats.expiredCerts = filteredCerts.filter(c => c.status === 'expired').length;
+                    this.stats.totalCerts = filteredCerts.length;
+                    this.stats.activeCerts = filteredCerts.length;
+                    this.stats.validCerts = filteredCerts.filter(c => c.status === 'valid').length;
+                    this.stats.expiringSoonCerts = filteredCerts.filter(c => c.status === 'expiring_soon').length;
+                    this.stats.expiredCerts = filteredCerts.filter(c => c.status === 'expired').length;
 
-        if (window.donutChartInstance) {
-            window.donutChartInstance.data.datasets[0].data = [
-                this.stats.signedDocs,
-                this.stats.pendingDocs,
-                this.stats.draftDocs,
-                this.stats.rejectedDocs
-            ];
-            window.donutChartInstance.update();
-        }
-        if (window.certDonutChartInstance) {
-            window.certDonutChartInstance.data.datasets[0].data = [
-                this.stats.validCerts,
-                this.stats.expiringSoonCerts,
-                this.stats.expiredCerts
-            ];
-            window.certDonutChartInstance.update();
-        }
-        if (window.lineChartInstance) {
-            let labels = [];
-            let dataPoints = [];
-            if (this.timeFilter === 'today') {
-                labels = ['00:00', '06:00', '12:00', '18:00', '24:00'];
-                dataPoints = [
-                    filteredDocs.filter(d => new Date(d.created_at).getHours() < 6).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getHours() >= 6 && new Date(d.created_at).getHours() < 12).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getHours() >= 12 && new Date(d.created_at).getHours() < 18).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getHours() >= 18).length,
-                    filteredDocs.length
-                ];
-            } else if (this.timeFilter === 'week') {
-                labels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
-                dataPoints = [0, 0, 0, 0, 0, 0, 0];
-                filteredDocs.forEach(d => {
-                    const day = new Date(d.created_at).getDay();
-                    const idx = day === 0 ? 6 : day - 1;
-                    dataPoints[idx]++;
-                });
-            } else if (this.timeFilter === 'month') {
-                labels = ['1 Jun', '6 Jun', '11 Jun', '16 Jun', '21 Jun'];
-                dataPoints = [
-                    filteredDocs.filter(d => new Date(d.created_at).getDate() <= 5).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getDate() > 5 && new Date(d.created_at).getDate() <= 10).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getDate() > 10 && new Date(d.created_at).getDate() <= 15).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getDate() > 15 && new Date(d.created_at).getDate() <= 20).length,
-                    filteredDocs.length
-                ];
-            } else if (this.timeFilter === 'year') {
-                labels = ['Jan', 'Mar', 'Mei', 'Jul', 'Sep', 'Nov'];
-                dataPoints = [
-                    filteredDocs.filter(d => new Date(d.created_at).getMonth() <= 1).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 1 && new Date(d.created_at).getMonth() <= 3).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 3 && new Date(d.created_at).getMonth() <= 5).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 5 && new Date(d.created_at).getMonth() <= 7).length,
-                    filteredDocs.filter(d => new Date(d.created_at).getMonth() > 7 && new Date(d.created_at).getMonth() <= 9).length,
-                    filteredDocs.length
-                ];
-            }
-            window.lineChartInstance.data.labels = labels;
-            window.lineChartInstance.data.datasets[0].data = dataPoints;
-            window.lineChartInstance.update();
-        }
-    },
-    showToast(msg, type = 'success') {
-        this.toastMessage = msg;
-        this.toastType = type;
-        this.toastShow = true;
-        setTimeout(() => { this.toastShow = false; }, 4000);
-    },
-    simuleVerify() {
-        let fName = this.verifyFileName;
-        if (!fName) {
-            this.showToast('Silakan unggah dokumen PDF untuk diverifikasi.', 'error');
-            return;
-        }
-        this.verifying = true;
-        this.verified = false;
-        this.verifyDetails = null;
+                    if (window.donutChartInstance) {
+                        window.donutChartInstance.data.datasets[0].data = [
+                            this.stats.signedDocs,
+                            this.stats.pendingDocs,
+                            this.stats.draftDocs,
+                            this.stats.rejectedDocs
+                        ];
+                        window.donutChartInstance.update();
+                    }
+                    if (window.certDonutChartInstance) {
+                        window.certDonutChartInstance.data.datasets[0].data = [
+                            this.stats.validCerts,
+                            this.stats.expiringSoonCerts,
+                            this.stats.expiredCerts
+                        ];
+                        window.certDonutChartInstance.update();
+                    }
+                    if (window.lineChartInstance) {
+                        let labels = [];
+                        let dataPoints = [];
+                        if (this.timeFilter === 'today') {
+                            labels = ['00:00', '06:00', '12:00', '18:00', '24:00'];
+                            dataPoints = [
+                                filteredDocs.filter(d => new Date(d.created_at).getHours() < 6).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getHours() >= 6 && new Date(d.created_at).getHours() < 12).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getHours() >= 12 && new Date(d.created_at).getHours() < 18).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getHours() >= 18).length,
+                                filteredDocs.length
+                            ];
+                        } else if (this.timeFilter === 'week') {
+                            labels = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+                            dataPoints = [0, 0, 0, 0, 0, 0, 0];
+                            filteredDocs.forEach(d => {
+                                const day = new Date(d.created_at).getDay();
+                                const idx = day === 0 ? 6 : day - 1;
+                                dataPoints[idx]++;
+                            });
+                        } else if (this.timeFilter === 'month') {
+                            labels = ['1 Jun', '6 Jun', '11 Jun', '16 Jun', '21 Jun'];
+                            dataPoints = [
+                                filteredDocs.filter(d => new Date(d.created_at).getDate() <= 5).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getDate() > 5 && new Date(d.created_at).getDate() <= 10).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getDate() > 10 && new Date(d.created_at).getDate() <= 15).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getDate() > 15 && new Date(d.created_at).getDate() <= 20).length,
+                                filteredDocs.length
+                            ];
+                        } else if (this.timeFilter === 'year') {
+                            labels = ['Jan', 'Mar', 'Mei', 'Jul', 'Sep', 'Nov'];
+                            dataPoints = [
+                                filteredDocs.filter(d => new Date(d.created_at).getMonth() <= 1).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getMonth() > 1 && new Date(d.created_at).getMonth() <= 3).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getMonth() > 3 && new Date(d.created_at).getMonth() <= 5).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getMonth() > 5 && new Date(d.created_at).getMonth() <= 7).length,
+                                filteredDocs.filter(d => new Date(d.created_at).getMonth() > 7 && new Date(d.created_at).getMonth() <= 9).length,
+                                filteredDocs.length
+                            ];
+                        }
+                        window.lineChartInstance.data.labels = labels;
+                        window.lineChartInstance.data.datasets[0].data = dataPoints;
+                        window.lineChartInstance.update();
+                    }
+                },
+                
+                showToast(msg, type = 'success') {
+                    this.toastMessage = msg;
+                    this.toastType = type;
+                    this.toastShow = true;
+                    setTimeout(() => { this.toastShow = false; }, 4000);
+                },
+                
+                simuleVerify() {
+                    let fName = this.verifyFileName;
+                    if (!fName) {
+                        this.showToast('Silakan unggah dokumen PDF untuk diverifikasi.', 'error');
+                        return;
+                    }
+                    this.verifying = true;
+                    this.verified = false;
+                    this.verifyDetails = null;
 
-        let formData = new FormData();
-        formData.append('file_name', fName);
-        formData.append('_token', '{{ csrf_token() }}');
+                    let formData = new FormData();
+                    formData.append('file_name', fName);
+                    formData.append('_token', '{{ csrf_token() }}');
 
-        fetch('/verify', {
-            method: 'POST',
-            body: formData
-        })
-        .then(res => res.json())
-        .then(data => {
-            this.verifying = false;
-            if (data.verified) {
-                this.verified = true;
-                this.verifyDetails = data;
-                this.showToast('Verifikasi stempel digital sukses!', 'success');
-            } else {
-                this.verified = false;
-                this.showToast(data.message, 'error');
-            }
-        })
-        .catch(err => {
-            this.verifying = false;
-            this.showToast('Koneksi server gagal.', 'error');
+                    fetch('/verify', {
+                        method: 'POST',
+                        body: formData
+                    })
+                    .then(res => res.json())
+                    .then(data => {
+                        this.verifying = false;
+                        if (data.verified) {
+                            this.verified = true;
+                            this.verifyDetails = data;
+                            this.showToast('Verifikasi stempel digital sukses!', 'success');
+                        } else {
+                            this.verified = false;
+                            this.showToast(data.message, 'error');
+                        }
+                    })
+                    .catch(err => {
+                        this.verifying = false;
+                        this.showToast('Koneksi server gagal.', 'error');
+                    });
+                }
+            }));
         });
-    }
-}"
-x-init="
+    </script>
+</head>
+<body class="text-slate-800 flex h-screen overflow-hidden relative dot-pattern" x-data="dashboardState" x-init="
     @if(session('success'))
         showToast('{{ session('success') }}', 'success');
     @endif
@@ -428,8 +508,66 @@ x-init="
             </a>
         </nav>
 
-        <!-- Upgrade Box -->
+        <!-- Upgrade Box / Subscription Card -->
         <div class="px-4 py-4">
+            @if(($currentUser->plan ?? 'free') === 'secure')
+            <!-- Secure Plan Active Card -->
+            <div class="bg-gradient-to-br from-indigo-950 to-slate-900 border border-indigo-500/30 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-indigo-950/50">
+                <div class="absolute top-0 right-0 w-16 h-16 bg-emerald-500 rounded-full blur-3xl opacity-15"></div>
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center space-x-2">
+                        <i class="ph-fill ph-crown text-amber-400 text-lg"></i>
+                        <span class="font-bold text-xs text-white tracking-wide uppercase">Secure Plan</span>
+                    </div>
+                    <span class="flex h-2 w-2 relative">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                    </span>
+                </div>
+                <p class="text-[10px] text-indigo-200 mb-2.5 font-medium">Penyimpanan Terenkripsi (AES-256):</p>
+                <div class="space-y-1 mb-3">
+                    <div class="flex justify-between text-[10px] text-slate-300 font-mono">
+                        <span>1.8 GB</span>
+                        <span>10 GB (18%)</span>
+                    </div>
+                    <div class="w-full bg-indigo-950/60 rounded-full h-1.5 overflow-hidden border border-indigo-800/40">
+                        <div class="bg-gradient-to-r from-indigo-500 to-emerald-500 h-1.5 rounded-full" style="width: 18%"></div>
+                    </div>
+                </div>
+                <button @click="upgradePlanModal = true" class="w-full bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-100 hover:text-white text-xs font-semibold py-1.5 rounded-lg transition-all duration-200">
+                    Kelola Layanan
+                </button>
+            </div>
+            @elseif(($currentUser->plan ?? 'free') === 'enterprise')
+            <!-- Enterprise Plan Active Card -->
+            <div class="bg-gradient-to-br from-purple-950 to-slate-900 border border-purple-500/30 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-purple-950/50">
+                <div class="absolute top-0 right-0 w-16 h-16 bg-fuchsia-500 rounded-full blur-3xl opacity-15"></div>
+                <div class="flex items-center justify-between mb-3">
+                    <div class="flex items-center space-x-2">
+                        <i class="ph-fill ph-shield text-purple-400 text-lg"></i>
+                        <span class="font-bold text-xs text-white tracking-wide uppercase">Enterprise</span>
+                    </div>
+                    <span class="flex h-2 w-2 relative">
+                        <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75"></span>
+                        <span class="relative inline-flex rounded-full h-2 w-2 bg-purple-500"></span>
+                    </span>
+                </div>
+                <p class="text-[10px] text-purple-200 mb-2.5 font-medium">Penyimpanan Terdedikasi HSM:</p>
+                <div class="space-y-1 mb-3">
+                    <div class="flex justify-between text-[10px] text-slate-300 font-mono">
+                        <span>4.2 GB</span>
+                        <span>Unlimited</span>
+                    </div>
+                    <div class="w-full bg-purple-950/60 rounded-full h-1.5 overflow-hidden border border-purple-800/40">
+                        <div class="bg-gradient-to-r from-purple-500 to-fuchsia-500 h-1.5 rounded-full" style="width: 35%"></div>
+                    </div>
+                </div>
+                <button @click="upgradePlanModal = true" class="w-full bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-100 hover:text-white text-xs font-semibold py-1.5 rounded-lg transition-all duration-200">
+                    Kelola Layanan
+                </button>
+            </div>
+            @else
+            <!-- Free Plan (Default) Upgrade Card -->
             <div class="bg-gradient-to-br from-blue-900 to-primary-950 border border-blue-800 rounded-2xl p-4 relative overflow-hidden">
                 <div class="absolute top-0 right-0 w-16 h-16 bg-blue-500 rounded-full blur-3xl opacity-20"></div>
                 <div class="flex items-center space-x-2 mb-2">
@@ -437,8 +575,11 @@ x-init="
                     <h4 class="font-bold text-sm text-white">LEXA Secure Plan</h4>
                 </div>
                 <p class="text-xs text-slate-300 mb-3 leading-relaxed">Tingkatkan ke plan premium untuk fitur lebih lengkap dan penyimpanan lebih besar.</p>
-                <button class="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2 rounded-lg transition-colors">Upgrade Plan</button>
+                <button @click="upgradePlanModal = true" class="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold py-2 rounded-lg transition-all duration-200 shadow-md shadow-blue-900/40">
+                    Upgrade Plan
+                </button>
             </div>
+            @endif
         </div>
 
         <!-- User Profile -->
@@ -489,11 +630,101 @@ x-init="
                     <input type="text" x-model="searchQuery" class="block w-full pl-10 pr-3 py-2 border border-slate-200 rounded-full leading-5 bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all" placeholder="Cari dokumen, tipe, status...">
                 </div>
 
-                <!-- Notifications -->
-                <button @click="showToast('Anda memiliki 3 dokumen baru yang memerlukan tanda tangan.', 'info')" class="relative text-slate-400 hover:text-slate-600 transition-colors">
-                    <i class="ph ph-bell text-2xl"></i>
-                    <span class="absolute top-0 right-0 block h-4 w-4 rounded-full bg-indigo-600 text-white text-[0.6rem] font-bold leading-4 text-center ring-2 ring-white">3</span>
-                </button>
+                <!-- Notifications Dropdown -->
+                <div class="relative">
+                    <button @click="showNotifications = !showNotifications" @click.away="showNotifications = false" class="relative text-slate-400 hover:text-slate-600 transition-colors focus:outline-none p-1 rounded-full hover:bg-slate-100">
+                        <i class="ph ph-bell text-2xl" :class="showNotifications ? 'text-indigo-600' : ''"></i>
+                        <template x-if="unreadNotifsCount > 0">
+                            <span class="absolute -top-1 -right-1 block h-5 w-5 rounded-full bg-indigo-600 text-white text-[0.65rem] font-extrabold leading-5 text-center ring-2 ring-white" x-text="unreadNotifsCount"></span>
+                        </template>
+                    </button>
+
+                    <!-- Popover Dropdown -->
+                    <div x-show="showNotifications" 
+                         x-transition:enter="transition ease-out duration-200 transform"
+                         x-transition:enter-start="opacity-0 translate-y-1 scale-95"
+                         x-transition:enter-end="opacity-100 translate-y-0 scale-100"
+                         x-transition:leave="transition ease-in duration-150 transform"
+                         x-transition:leave-start="opacity-100 translate-y-0 scale-100"
+                         x-transition:leave-end="opacity-0 translate-y-1 scale-95"
+                         class="bg-white/95 backdrop-blur-md border border-slate-150 rounded-2xl shadow-2xl absolute right-0 mt-3.5 w-80 z-50 text-slate-800 overflow-hidden" 
+                         style="display: none;">
+                        
+                        <!-- Popover Header -->
+                        <div class="p-4 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+                            <div class="flex items-center space-x-1.5">
+                                <span class="font-bold text-sm text-slate-800 font-outfit">Notifikasi</span>
+                                <template x-if="unreadNotifsCount > 0">
+                                    <span class="bg-indigo-50 text-indigo-700 font-extrabold text-[9px] px-2 py-0.5 rounded-full uppercase" x-text="unreadNotifsCount + ' baru'"></span>
+                                </template>
+                            </div>
+                            <button x-show="unreadNotifsCount > 0" @click="markAllAsRead()" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition-colors focus:outline-none">
+                                Tandai semua dibaca
+                            </button>
+                        </div>
+
+                        <!-- Popover List -->
+                        <div class="max-h-80 overflow-y-auto divide-y divide-slate-100 custom-scrollbar">
+                            <template x-for="notif in notificationsList" :key="notif.id">
+                                <div @click="markAsRead(notif)" class="p-3.5 flex items-start space-x-3 hover:bg-slate-50/80 cursor-pointer transition-colors relative" :class="!notif.is_read ? 'bg-indigo-50/15' : ''">
+                                    
+                                    <!-- Left Icon based on type -->
+                                    <div class="shrink-0">
+                                        <!-- success -->
+                                        <template x-if="notif.type === 'success'">
+                                            <div class="bg-emerald-50 text-emerald-600 border border-emerald-100 p-1.5 rounded-xl text-sm flex items-center justify-center">
+                                                <i class="ph-bold ph-check text-base"></i>
+                                            </div>
+                                        </template>
+                                        <!-- warning -->
+                                        <template x-if="notif.type === 'warning'">
+                                            <div class="bg-amber-50 text-amber-600 border border-amber-100 p-1.5 rounded-xl text-sm flex items-center justify-center">
+                                                <i class="ph-bold ph-signature text-base"></i>
+                                            </div>
+                                        </template>
+                                        <!-- info -->
+                                        <template x-if="notif.type === 'info'">
+                                            <div class="bg-indigo-50 text-indigo-600 border border-indigo-100 p-1.5 rounded-xl text-sm flex items-center justify-center">
+                                                <i class="ph-bold ph-info text-base"></i>
+                                            </div>
+                                        </template>
+                                        <!-- system -->
+                                        <template x-if="notif.type === 'system'">
+                                            <div class="bg-slate-100 text-slate-600 border border-slate-200 p-1.5 rounded-xl text-sm flex items-center justify-center">
+                                                <i class="ph-bold ph-gear text-base"></i>
+                                            </div>
+                                        </template>
+                                    </div>
+
+                                    <!-- Content -->
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-xs font-bold text-slate-800 truncate" :class="!notif.is_read ? 'text-indigo-950 font-extrabold' : ''" x-text="notif.title"></p>
+                                        <p class="text-[10px] text-slate-500 mt-0.5 leading-relaxed break-words" x-text="notif.message"></p>
+                                        <span class="text-[9px] text-slate-400 mt-1.5 block font-mono" x-text="getRelativeTime(notif.created_at)"></span >
+                                    </div>
+
+                                    <!-- Unread Dot Indicator -->
+                                    <template x-if="!notif.is_read">
+                                        <span class="w-2.5 h-2.5 rounded-full bg-indigo-600 shrink-0 self-center ml-1.5 animate-pulse"></span>
+                                    </template>
+                                </div>
+                            </template>
+
+                            <!-- Empty State -->
+                            <template x-if="notificationsList.length === 0">
+                                <div class="p-8 text-center flex flex-col items-center justify-center space-y-2">
+                                    <div class="bg-slate-50 p-3 rounded-full border border-slate-100">
+                                        <i class="ph ph-bell-slash text-2xl text-slate-400"></i>
+                                    </div>
+                                    <div>
+                                        <p class="text-xs font-bold text-slate-700 font-outfit">Tidak ada notifikasi</p>
+                                        <p class="text-[10px] text-slate-400 mt-0.5 leading-relaxed">Semua aktivitas terbaru Anda akan muncul di sini.</p>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
 
                 <!-- Action Button -->
                 <button @click="uploadModal = true" class="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-2 rounded-full font-medium flex items-center space-x-2 transition-all shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:-translate-y-0.5">
@@ -1699,6 +1930,115 @@ print(response.json())</pre>
                             </div>
                         </div>
                     </div>
+
+                    <!-- PANEL: Billing & Subscription -->
+                    <div class="glass-card rounded-2xl p-6 space-y-6">
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                            <div>
+                                <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Billing & Subscription</h4>
+                                <p class="text-xs text-slate-500 mt-0.5">Kelola paket langganan, metode pembayaran, dan lihat invoice Anda.</p>
+                            </div>
+                            <span class="text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider" 
+                                  :class="{
+                                      'bg-slate-100 text-slate-700': currentPlan === 'free',
+                                      'bg-indigo-50 text-indigo-700 border border-indigo-150 animate-pulse': currentPlan === 'secure',
+                                      'bg-purple-50 text-purple-700 border border-purple-150': currentPlan === 'enterprise'
+                                  }"
+                                  x-text="currentPlan + ' Plan'">
+                            </span>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <!-- Subscription details -->
+                            <div class="space-y-4 col-span-2">
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div class="bg-slate-50 border border-slate-200/60 rounded-xl p-3.5 text-xs">
+                                        <p class="text-slate-400 font-semibold mb-1">Kapasitas Penyimpanan</p>
+                                        <p class="text-sm font-bold text-slate-800" x-text="currentPlan === 'secure' ? '10 GB (AES-256)' : (currentPlan === 'enterprise' ? 'Unlimited Dedicated' : '1 GB Standar')"></p>
+                                    </div>
+                                    <div class="bg-slate-50 border border-slate-200/60 rounded-xl p-3.5 text-xs">
+                                        <p class="text-slate-400 font-semibold mb-1">Metode Pembayaran</p>
+                                        <p class="text-sm font-bold text-slate-800 flex items-center space-x-1.5 font-mono">
+                                            <i class="ph ph-credit-card text-base"></i>
+                                            <span x-text="currentPlan === 'free' ? 'Tidak ada' : 'Mastercard **** 4820' "></span>
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div class="bg-slate-50 border border-slate-200/60 rounded-xl p-4 text-xs flex justify-between items-center">
+                                    <div>
+                                        <p class="font-bold text-slate-800" x-text="currentPlan === 'secure' ? 'Paket Secure Aktif' : (currentPlan === 'enterprise' ? 'Paket Enterprise Aktif' : 'Anda menggunakan paket Free')"></p>
+                                        <p class="text-slate-500 mt-1" x-text="currentPlan === 'free' ? 'Upgrade untuk tanda tangan tanpa batas dan integrasi resmi CA.' : 'Pembayaran berikutnya akan didebit secara otomatis pada 26 Juli 2026.'"></p>
+                                    </div>
+                                    <button @click="upgradePlanModal = true" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold px-4 py-2 rounded-xl transition-colors shrink-0 text-xs shadow-md shadow-indigo-500/10">
+                                        <span x-text="currentPlan === 'free' ? 'Upgrade Plan' : 'Ubah Paket'"></span>
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Payment statistics / quick status -->
+                            <div class="bg-slate-900 text-white rounded-2xl p-5 relative overflow-hidden flex flex-col justify-between shadow-lg">
+                                <div class="absolute top-0 right-0 w-24 h-24 bg-indigo-500 rounded-full blur-3xl opacity-20"></div>
+                                <div class="space-y-1 relative z-10">
+                                    <span class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest">Status Proteksi</span>
+                                    <p class="text-base font-bold font-outfit" x-text="currentPlan === 'free' ? 'Proteksi Dasar' : 'Proteksi Maksimal (HSM)'"></p>
+                                </div>
+                                <div class="mt-4 flex items-center space-x-2 relative z-10">
+                                    <div class="bg-white/10 p-2 rounded-xl border border-white/10">
+                                        <i class="ph-bold text-lg" :class="currentPlan === 'free' ? 'ph-shield-warning text-amber-400' : 'ph-shield-check text-emerald-400'"></i>
+                                    </div>
+                                    <span class="text-[10px] text-slate-300 leading-relaxed font-medium" x-text="currentPlan === 'free' ? 'Segera tingkatkan untuk enkripsi tingkat HSM fungsional.' : 'Kunci privat Anda tersimpan aman di HSM fisik bersertifikasi FIPS 140-2.'"></span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Invoice History -->
+                        <div class="border-t border-slate-100 pt-5">
+                            <h5 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Riwayat Invoices</h5>
+                            <div class="overflow-x-auto">
+                                <table class="w-full text-left text-xs font-medium text-slate-500">
+                                    <thead>
+                                        <tr class="text-slate-400 border-b border-slate-100 uppercase text-[9px] tracking-wider">
+                                            <th class="pb-2">Nomor Invoice</th>
+                                            <th class="pb-2">Tanggal</th>
+                                            <th class="pb-2">Paket</th>
+                                            <th class="pb-2">Nominal</th>
+                                            <th class="pb-2 text-right">Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody class="divide-y divide-slate-50">
+                                        <template x-if="currentPlan === 'free'">
+                                            <tr>
+                                                <td colspan="5" class="py-6 text-center text-slate-400">Belum ada riwayat pembayaran untuk paket Free.</td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="currentPlan !== 'free'">
+                                            <tr class="text-slate-700">
+                                                <td class="py-3 font-mono font-bold text-indigo-600">INV/20260626/LX/90384</td>
+                                                <td class="py-3 text-slate-500">26 Jun 2026</td>
+                                                <td class="py-3 text-slate-600" x-text="currentPlan === 'secure' ? 'LEXA Secure Plan (Tahunan)' : 'LEXA Enterprise Plan'"></td>
+                                                <td class="py-3 font-semibold text-slate-800" x-text="currentPlan === 'secure' ? (billingPeriod === 'monthly' ? 'Rp 331.890' : 'Rp 3.183.480') : 'Rp 9.990.000'"></td>
+                                                <td class="py-3 text-right">
+                                                    <span class="bg-emerald-50 text-emerald-600 border border-emerald-100 text-[10px] font-bold px-2 py-0.5 rounded-md">Paid</span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                        <template x-if="currentPlan === 'secure' && billingPeriod === 'monthly'">
+                                            <tr class="text-slate-700">
+                                                <td class="py-3 font-mono font-bold text-indigo-600">INV/20260526/LX/89402</td>
+                                                <td class="py-3 text-slate-500">26 Mei 2026</td>
+                                                <td class="py-3 text-slate-600">LEXA Secure Plan (Bulanan)</td>
+                                                <td class="py-3 font-semibold text-slate-800">Rp 331.890</td>
+                                                <td class="py-3 text-right">
+                                                    <span class="bg-emerald-50 text-emerald-600 border border-emerald-100 text-[10px] font-bold px-2 py-0.5 rounded-md">Paid</span>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
             </div>
@@ -2114,6 +2454,455 @@ print(response.json())</pre>
                     Mulai Verifikasi
                 </button>
             </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL: LEXA PRICING & UPGRADE PLANS (SECURE PLAN) -->
+    <!-- ========================================== -->
+    <div x-show="upgradePlanModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" style="display: none;" x-transition>
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-5xl w-full p-6 md:p-8 shadow-2xl overflow-y-auto max-h-[90vh] text-white relative" @click.away="upgradePlanModal = false">
+            
+            <!-- Close Button -->
+            <button @click="upgradePlanModal = false" class="absolute top-4 right-4 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800/50 hover:bg-slate-800 transition">
+                <i class="ph ph-x text-xl"></i>
+            </button>
+
+            <!-- Header -->
+            <div class="text-center max-w-2xl mx-auto mb-8">
+                <div class="inline-flex items-center space-x-2 bg-indigo-500/10 border border-indigo-500/30 px-3.5 py-1.5 rounded-full text-indigo-400 text-xs font-semibold tracking-wider uppercase mb-3">
+                    <i class="ph-fill ph-crown"></i>
+                    <span>LEXA Subscription Program</span>
+                </div>
+                <h2 class="text-3xl md:text-4xl font-bold font-outfit tracking-tight bg-gradient-to-r from-white via-indigo-200 to-indigo-400 bg-clip-text text-transparent">
+                    Pilih Proteksi Terbaik Dokumen Anda
+                </h2>
+                <p class="text-slate-400 text-sm mt-3 leading-relaxed">
+                    Tingkatkan efisiensi bisnis dan kepatuhan hukum dengan infrastruktur stempel digital berkecepatan tinggi, terenkripsi militer, dan terverifikasi secara sah.
+                </p>
+            </div>
+
+            <!-- Billing Period Toggle -->
+            <div class="flex items-center justify-center space-x-4 mb-10">
+                <span class="text-sm font-medium" :class="billingPeriod === 'monthly' ? 'text-white' : 'text-slate-500'">Bulanan</span>
+                <button @click="billingPeriod = billingPeriod === 'monthly' ? 'yearly' : 'monthly'" class="w-14 h-7 bg-indigo-600 rounded-full p-1 transition-all duration-300 relative focus:outline-none">
+                    <div class="w-5 h-5 bg-white rounded-full transition-all duration-300" :class="billingPeriod === 'yearly' ? 'translate-x-7' : 'translate-x-0'"></div>
+                </button>
+                <div class="flex items-center space-x-1.5">
+                    <span class="text-sm font-medium" :class="billingPeriod === 'yearly' ? 'text-white' : 'text-slate-500'">Tahunan</span>
+                    <span class="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                        Hemat 20%
+                    </span>
+                </div>
+            </div>
+
+            <!-- Pricing Grid -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-stretch">
+                
+                <!-- Plan 1: Free Starter -->
+                <div class="bg-slate-950/40 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between relative hover:border-slate-700 transition duration-300">
+                    <div>
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Free Starter</span>
+                        <div class="mt-2 flex items-baseline">
+                            <span class="text-3xl font-extrabold font-outfit text-white">Rp 0</span>
+                            <span class="text-slate-500 text-xs ml-1">/ selamanya</span>
+                        </div>
+                        <p class="text-xs text-slate-400 mt-3 leading-relaxed">Solusi dasar untuk individu yang ingin mencoba tanda tangan digital.</p>
+                        
+                        <div class="border-t border-slate-800/80 my-5"></div>
+                        
+                        <ul class="space-y-3 text-xs text-slate-300">
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-500"></i>
+                                <span>Kapasitas Penyimpanan 1 GB</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-500"></i>
+                                <span>5 Dokumen Tanda Tangan / bulan</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-500"></i>
+                                <span>Enkripsi Database Standar</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5 text-slate-600">
+                                <i class="ph-bold ph-x text-slate-600"></i>
+                                <span>Tanpa Integrasi CA Kominfo/BSrE</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5 text-slate-600">
+                                <i class="ph-bold ph-x text-slate-600"></i>
+                                <span>Tanpa Akses API & Webhooks</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mt-8">
+                        <button disabled class="w-full bg-slate-800 text-slate-400 text-xs font-bold py-3 rounded-xl cursor-not-allowed text-center" x-show="currentPlan === 'free'">
+                            Plan Aktif Saat Ini
+                        </button>
+                        <button @click="currentPlan = 'free'; upgradePlanModal = false; showToast('Kembali ke Plan Free.', 'info')" class="w-full bg-slate-800 hover:bg-slate-750 text-white text-xs font-bold py-3 rounded-xl transition text-center" x-show="currentPlan !== 'free'">
+                            Kembali ke Free Plan
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Plan 2: Secure Plan (Recommended) -->
+                <div class="bg-gradient-to-b from-indigo-950/50 to-slate-950/60 border-2 border-indigo-500 rounded-2xl p-6 flex flex-col justify-between relative shadow-xl shadow-indigo-500/5 hover:scale-[1.02] transition-all duration-300">
+                    <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] font-extrabold uppercase px-3 py-1 rounded-full tracking-wider shadow">
+                        Paling Populer
+                    </div>
+                    
+                    <div>
+                        <div class="flex justify-between items-start">
+                            <span class="text-xs font-bold text-indigo-400 uppercase tracking-wider">LEXA Secure Plan</span>
+                            <i class="ph-fill ph-crown text-amber-400 text-xl animate-pulse"></i>
+                        </div>
+                        <div class="mt-2 flex items-baseline">
+                            <span class="text-4xl font-extrabold font-outfit text-white" x-text="billingPeriod === 'monthly' ? 'Rp 299.000' : 'Rp 239.000'"></span>
+                            <span class="text-slate-400 text-xs ml-1">/ bulan</span>
+                        </div>
+                        <span class="text-[10px] text-indigo-300 font-medium font-mono" x-show="billingPeriod === 'yearly'">Billed annually: Rp 2.868.000</span>
+                        <p class="text-xs text-slate-300 mt-3 leading-relaxed">Paket lengkap untuk korporasi menengah & profesional dengan jaminan keamanan ekstra.</p>
+                        
+                        <div class="border-t border-indigo-500/20 my-5"></div>
+                        
+                        <ul class="space-y-3 text-xs text-slate-200">
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span><strong>10 GB</strong> Penyimpanan Terenkripsi (AES-256)</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span>Tanda Tangan & Dokumen <strong>Tanpa Batas</strong></span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span>Kompatibel <strong>BSrE (BSSN) & Kominfo CA</strong></span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span>Layanan <strong>Timestamp Authority (TSA)</strong></span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span>Keamanan <strong>HSM (Hardware Security Module)</strong></span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span>Akses API Keys & Webhooks Terintegrasi</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-emerald-400"></i>
+                                <span>Prioritas Support 24/7/365</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mt-8">
+                        <button disabled class="w-full bg-emerald-600 text-white text-xs font-bold py-3 rounded-xl flex items-center justify-center space-x-1.5" x-show="currentPlan === 'secure'">
+                            <i class="ph-bold ph-circle-wavy-check text-lg"></i>
+                            <span>Plan Aktif</span>
+                        </button>
+                        <button @click="
+                            selectedPlanForCheckout = 'secure';
+                            upgradePlanModal = false;
+                            checkoutModal = true;
+                            paymentSuccess = false;
+                            processingPayment = false;
+                        " class="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs font-bold py-3 rounded-xl transition duration-250 text-center shadow-lg shadow-indigo-600/30" x-show="currentPlan !== 'secure'">
+                            Upgrade Sekarang
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Plan 3: Enterprise Suite -->
+                <div class="bg-slate-950/40 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between relative hover:border-slate-700 transition duration-300">
+                    <div>
+                        <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">Enterprise Suite</span>
+                        <div class="mt-2 flex items-baseline">
+                            <span class="text-3xl font-extrabold font-outfit text-white">Custom</span>
+                            <span class="text-slate-500 text-xs ml-1">/ kuota besar</span>
+                        </div>
+                        <p class="text-xs text-slate-400 mt-3 leading-relaxed">Integrasi penuh infrastruktur on-premise atau multi-tenant dedicated HSM.</p>
+                        
+                        <div class="border-t border-slate-800/80 my-5"></div>
+                        
+                        <ul class="space-y-3 text-xs text-slate-300">
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-indigo-400"></i>
+                                <span>Penyimpanan Dedicated <strong>Tanpa Batas</strong></span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-indigo-400"></i>
+                                <span>Dedicated HSM Cluster Node</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-indigo-400"></i>
+                                <span>SLA Layanan <strong>99.99%</strong></span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-indigo-400"></i>
+                                <span>Custom Branding & Custom Domain CA</span>
+                            </li>
+                            <li class="flex items-center space-x-2.5">
+                                <i class="ph-bold ph-check text-indigo-400"></i>
+                                <span>Dedicated Account Manager</span>
+                            </li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mt-8">
+                        <button disabled class="w-full bg-purple-600 text-white text-xs font-bold py-3 rounded-xl flex items-center justify-center space-x-1.5" x-show="currentPlan === 'enterprise'">
+                            <i class="ph-bold ph-circle-wavy-check text-lg"></i>
+                            <span>Plan Aktif</span>
+                        </button>
+                        <button @click="
+                            selectedPlanForCheckout = 'enterprise';
+                            upgradePlanModal = false;
+                            checkoutModal = true;
+                            paymentSuccess = false;
+                            processingPayment = false;
+                        " class="w-full bg-slate-800 hover:bg-slate-750 text-white text-xs font-bold py-3 rounded-xl transition text-center" x-show="currentPlan !== 'enterprise'">
+                            Hubungi Penjualan
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================== -->
+    <!-- MODAL: SECURE CHECKOUT SIMULATION -->
+    <!-- ========================================== -->
+    <div x-show="checkoutModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" style="display: none;" x-transition>
+        <div class="bg-white rounded-3xl max-w-lg w-full shadow-2xl border border-slate-100 overflow-hidden text-slate-800 relative" @click.away="if(!processingPayment && !paymentSuccess) checkoutModal = false">
+            
+            <!-- Modal Header -->
+            <div class="bg-slate-50 border-b border-slate-100 p-6 flex justify-between items-center">
+                <div class="flex items-center space-x-2.5">
+                    <div class="bg-indigo-50 text-indigo-600 p-1.5 rounded-lg border border-indigo-100">
+                        <i class="ph-bold ph-shield-check text-lg"></i>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-slate-800 font-outfit text-sm">Secure Payment Gateway</h3>
+                        <p class="text-[10px] text-slate-400 font-medium">Transaksi terenkripsi SSL 256-bit</p>
+                    </div>
+                </div>
+                <button @click="checkoutModal = false" :disabled="processingPayment" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition disabled:opacity-30">
+                    <i class="ph ph-x text-lg"></i>
+                </button>
+            </div>
+
+            <!-- PAYMENT SUCCESS STATE -->
+            <div class="p-8 text-center space-y-5" x-show="paymentSuccess" x-transition>
+                <div class="w-20 h-20 bg-emerald-50 border border-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mx-auto shadow-lg shadow-emerald-100/50 scale-105 transition-transform duration-500">
+                    <i class="ph-fill ph-check-circle text-5xl animate-bounce"></i>
+                </div>
+                <div class="space-y-1.5">
+                    <h3 class="text-xl font-bold text-slate-900 font-outfit">Pembayaran Berhasil!</h3>
+                    <p class="text-xs text-slate-500 max-w-xs mx-auto">
+                        Selamat! Transaksi Anda telah sukses diverifikasi. Akun Anda berhasil ditingkatkan ke paket premium.
+                    </p>
+                </div>
+                
+                <div class="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 text-left max-w-sm mx-auto text-xs space-y-2 font-medium">
+                    <div class="flex justify-between text-slate-500">
+                        <span>Invoice ID</span>
+                        <span class="font-mono font-bold text-slate-800">INV/20260626/LX/90384</span>
+                    </div>
+                    <div class="flex justify-between text-slate-500">
+                        <span>Paket Terpilih</span>
+                        <span class="font-bold text-indigo-600 uppercase" x-text="selectedPlanForCheckout + ' plan'"></span>
+                    </div>
+                    <div class="flex justify-between text-slate-500">
+                        <span>Nominal Bayar</span>
+                        <span class="font-bold text-slate-800" x-text="selectedPlanForCheckout === 'secure' ? (billingPeriod === 'monthly' ? 'Rp 331.890' : 'Rp 3.183.480') : 'Rp 9.990.000'"></span>
+                    </div>
+                </div>
+
+                <div class="pt-2">
+                    <!-- Real HTML form to submit to the backend for actual database updates! -->
+                    <form action="/upgrade" method="POST" id="upgrade-form" class="inline">
+                        @csrf
+                        <input type="hidden" name="plan" :value="selectedPlanForCheckout">
+                        <button type="submit" class="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold py-3 rounded-2xl text-xs transition duration-200 shadow-md">
+                            Selesai & Aktifkan Fitur
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- PAYMENT PROCESSING STATE -->
+            <div class="p-10 text-center space-y-4" x-show="processingPayment" x-transition>
+                <div class="flex flex-col items-center justify-center space-y-4 py-8">
+                    <svg class="animate-spin h-12 w-12 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <div class="space-y-1">
+                        <p class="text-sm font-bold text-slate-800">Menghubungi Server Bank...</p>
+                        <p class="text-[10px] text-slate-400 font-medium">Jangan menutup atau memuat ulang halaman ini</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- CHECKOUT FORM STATE -->
+            <div x-show="!processingPayment && !paymentSuccess">
+                <!-- Plan Summary -->
+                <div class="p-6 bg-indigo-50/40 border-b border-slate-100 flex justify-between items-center">
+                    <div class="text-xs">
+                        <p class="text-slate-400 font-medium">Membeli Layanan:</p>
+                        <p class="font-bold text-slate-800 text-sm flex items-center space-x-1.5 mt-0.5">
+                            <i class="ph-fill ph-crown text-amber-500"></i>
+                            <span x-text="selectedPlanForCheckout === 'secure' ? 'LEXA Secure Plan' : 'LEXA Enterprise Plan'"></span>
+                            <span class="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full font-bold text-[9px] uppercase" x-text="billingPeriod"></span>
+                        </p>
+                    </div>
+                    <div class="text-right text-xs">
+                        <p class="text-slate-400 font-medium">Total Tagihan (+PPN 11%):</p>
+                        <p class="font-extrabold text-indigo-600 text-base mt-0.5" x-text="selectedPlanForCheckout === 'secure' ? (billingPeriod === 'monthly' ? 'Rp 331.890' : 'Rp 3.183.480') : 'Rp 9.990.000'"></p>
+                    </div>
+                </div>
+
+                <!-- Payment Method Select Tabs -->
+                <div class="px-6 pt-6">
+                    <label class="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">Pilih Metode Pembayaran</label>
+                    <div class="grid grid-cols-3 gap-2.5">
+                        <button @click="paymentMethod = 'cc'" :class="paymentMethod === 'cc' ? 'border-indigo-600 bg-indigo-50/40 text-indigo-600 font-bold' : 'border-slate-200 hover:bg-slate-50 text-slate-500'" class="border rounded-xl p-3 flex flex-col items-center justify-center space-y-1.5 transition-all text-xs">
+                            <i class="ph ph-credit-card text-xl"></i>
+                            <span>Kartu Kredit</span>
+                        </button>
+                        <button @click="paymentMethod = 'qris'" :class="paymentMethod === 'qris' ? 'border-indigo-600 bg-indigo-50/40 text-indigo-600 font-bold' : 'border-slate-200 hover:bg-slate-50 text-slate-500'" class="border rounded-xl p-3 flex flex-col items-center justify-center space-y-1.5 transition-all text-xs">
+                            <i class="ph ph-qr-code text-xl"></i>
+                            <span>QRIS Instant</span>
+                        </button>
+                        <button @click="paymentMethod = 'va'" :class="paymentMethod === 'va' ? 'border-indigo-600 bg-indigo-50/40 text-indigo-600 font-bold' : 'border-slate-200 hover:bg-slate-50 text-slate-500'" class="border rounded-xl p-3 flex flex-col items-center justify-center space-y-1.5 transition-all text-xs">
+                            <i class="ph ph-bank text-xl"></i>
+                            <span>Virtual Account</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Payment Form Content -->
+                <div class="p-6">
+                    <!-- CC Form -->
+                    <div x-show="paymentMethod === 'cc'" class="space-y-4" x-transition>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Nomor Kartu Kredit</label>
+                            <div class="relative flex items-center">
+                                <input type="text" maxlength="19" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 pl-10 text-xs font-mono tracking-widest text-slate-700 focus:outline-none" placeholder="4111 2222 3333 4444" value="4111 2222 3333 4444">
+                                <i class="ph-fill ph-credit-card text-lg text-slate-400 absolute left-3.5"></i>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Masa Berlaku</label>
+                                <input type="text" maxlength="5" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-700 focus:outline-none" placeholder="MM/YY" value="12/29">
+                            </div>
+                            <div>
+                                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">CVV / CVC</label>
+                                <input type="password" maxlength="3" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs font-mono text-slate-700 focus:outline-none" placeholder="123" value="123">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- QRIS Form -->
+                    <div x-show="paymentMethod === 'qris'" class="flex flex-col items-center space-y-3 py-2" x-transition>
+                        <!-- QR Code SVG Grid Mockup -->
+                        <div class="bg-white p-3 rounded-2xl border border-slate-200 shadow-md">
+                            <svg class="w-36 h-36" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <rect width="100" height="100" rx="10" fill="#fff"/>
+                                <!-- QR patterns mock -->
+                                <rect x="5" y="5" width="25" height="25" fill="#0f172a"/>
+                                <rect x="10" y="10" width="15" height="15" fill="#fff"/>
+                                <rect x="12" y="12" width="11" height="11" fill="#0f172a"/>
+                                
+                                <rect x="70" y="5" width="25" height="25" fill="#0f172a"/>
+                                <rect x="75" y="10" width="15" height="15" fill="#fff"/>
+                                <rect x="77" y="77" width="11" height="11" fill="#0f172a"/>
+
+                                <rect x="5" y="70" width="25" height="25" fill="#0f172a"/>
+                                <rect x="10" y="75" width="15" height="15" fill="#fff"/>
+                                <rect x="12" y="77" width="11" height="11" fill="#0f172a"/>
+
+                                <rect x="70" y="70" width="25" height="25" fill="#0f172a"/>
+                                <rect x="75" y="75" width="15" height="15" fill="#fff"/>
+                                
+                                <!-- Random dots to simulate a QR code -->
+                                <rect x="35" y="10" width="8" height="8" fill="#0f172a"/>
+                                <rect x="48" y="5" width="14" height="6" fill="#0f172a"/>
+                                <rect x="35" y="25" width="18" height="5" fill="#0f172a"/>
+                                <rect x="58" y="20" width="6" height="15" fill="#0f172a"/>
+                                <rect x="5" y="35" width="12" height="6" fill="#0f172a"/>
+                                <rect x="22" y="38" width="18" height="8" fill="#0f172a"/>
+                                <rect x="5" y="52" width="25" height="8" fill="#0f172a"/>
+                                <rect x="35" y="45" width="22" height="10" fill="#0f172a"/>
+                                <rect x="62" y="42" width="14" height="12" fill="#0f172a"/>
+                                <rect x="42" y="60" width="12" height="22" fill="#0f172a"/>
+                                <rect x="15" y="62" width="12" height="6" fill="#0f172a"/>
+                                <rect x="62" y="60" width="30" height="6" fill="#0f172a"/>
+                                <rect x="58" y="72" width="8" height="18" fill="#0f172a"/>
+                                <rect x="32" y="85" width="22" height="8" fill="#0f172a"/>
+                                <!-- Central brand badge -->
+                                <rect x="40" y="40" width="20" height="20" rx="4" fill="#6366f1"/>
+                                <path d="M47 45H53V55H47V45Z" fill="#fff"/>
+                                <circle cx="50" cy="50" r="2" fill="#6366f1"/>
+                            </svg>
+                        </div>
+                        <p class="text-[10px] text-slate-500 font-bold tracking-wide uppercase text-center">Scan QR Code dengan aplikasi Dompet Digital (GoPay, OVO, ShopeePay, Dana, LinkAja)</p>
+                    </div>
+
+                    <!-- VA Form -->
+                    <div x-show="paymentMethod === 'va'" class="space-y-4" x-transition>
+                        <div class="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-3">
+                            <div class="flex justify-between items-center">
+                                <span class="text-[10px] font-bold text-slate-400 uppercase">Bank Penerima</span>
+                                <span class="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-lg">BANK MANDIRI</span>
+                            </div>
+                            <div class="border-t border-slate-200/60 my-2"></div>
+                            <div>
+                                <span class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nomor Virtual Account</span>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm font-mono font-extrabold text-slate-800 select-all">8839 1029 3847 2831</span>
+                                    <button @click="
+                                        navigator.clipboard.writeText('8839102938472831');
+                                        showToast('Nomor Virtual Account berhasil disalin!', 'success');
+                                    " class="text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-100 p-1.5 rounded-lg transition-colors flex items-center space-x-1 text-[10px] font-bold">
+                                        <i class="ph ph-copy"></i>
+                                        <span>Salin</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="text-[10px] text-slate-400 leading-relaxed font-medium">
+                            <p class="font-bold text-slate-500">Petunjuk Pembayaran:</p>
+                            <ol class="list-decimal list-inside space-y-0.5 mt-1">
+                                <li>Masuk ke ATM Mandiri atau Mandiri Online.</li>
+                                <li>Pilih menu Bayar/Beli > Multi Payment.</li>
+                                <li>Masukkan kode institusi <strong>8839</strong> dan Nomor VA di atas.</li>
+                                <li>Verifikasi total tagihan lalu konfirmasi transaksi.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer and Submit -->
+                <div class="bg-slate-50 border-t border-slate-100 p-6 flex items-center justify-between">
+                    <button @click="checkoutModal = false; upgradePlanModal = true" class="text-slate-500 hover:text-slate-700 text-xs font-bold py-3 px-4 rounded-xl hover:bg-slate-100 transition-colors">
+                        Kembali
+                    </button>
+                    <button @click="
+                        processingPayment = true;
+                        setTimeout(() => {
+                            processingPayment = false;
+                            paymentSuccess = true;
+                        }, 2500);
+                    " class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-3 px-6 rounded-xl transition duration-200 shadow-lg shadow-indigo-600/20">
+                        Bayar Sekarang
+                    </button>
+                </div>
+            </div>
+
         </div>
     </div>
 

@@ -11,6 +11,7 @@ use App\Models\User;
 use App\Models\Signature;
 use App\Models\Team;
 use App\Models\ApiKey;
+use App\Models\Notification;
 
 // 1. Authentication Routes
 Route::get('/login', function () {
@@ -83,12 +84,51 @@ Route::middleware('auth')->group(function () {
         $allTeams = Team::with('members')->latest()->get();
         $allApiKeys = ApiKey::latest()->get();
 
+        // Fetch notifications and seed demo ones if empty
+        $notifications = $currentUser->notifications()->take(15)->get();
+        $unreadNotifsCount = $currentUser->notifications()->where('is_read', false)->count();
+
+        if ($notifications->isEmpty()) {
+            Notification::create([
+                'user_id' => $currentUser->id,
+                'title' => 'Permintaan Tanda Tangan',
+                'message' => 'Dokumen "Surat Perjanjian Kerja Sama (PKS)_V2.pdf" memerlukan tanda tangan digital Anda.',
+                'type' => 'warning',
+                'is_read' => false,
+                'link' => 'signatures',
+                'created_at' => now()->subMinutes(12),
+            ]);
+            Notification::create([
+                'user_id' => $currentUser->id,
+                'title' => 'Sertifikat Diterbitkan',
+                'message' => 'Sertifikat Otoritas Jaringan LEXA Anda telah berhasil diterbitkan dan berstatus aktif.',
+                'type' => 'success',
+                'is_read' => false,
+                'link' => 'certificates',
+                'created_at' => now()->subHours(2),
+            ]);
+            Notification::create([
+                'user_id' => $currentUser->id,
+                'title' => 'Selamat Datang',
+                'message' => 'Selamat datang di LEXA Digital Sign & Certificate System. Kelola dokumen Anda secara aman dengan enkripsi AES-256.',
+                'type' => 'info',
+                'is_read' => true,
+                'link' => 'dashboard',
+                'created_at' => now()->subDays(1),
+            ]);
+
+            // Re-fetch
+            $notifications = $currentUser->notifications()->take(15)->get();
+            $unreadNotifsCount = $currentUser->notifications()->where('is_read', false)->count();
+        }
+
         return view('welcome', compact(
             'currentUser',
             'totalDocs', 'signedDocs', 'pendingDocs', 'draftDocs', 'rejectedDocs',
             'activeCerts', 'expiredCerts', 'validCerts', 'expiringSoonCerts',
             'nextExpiry', 'recentDocuments', 'recentActivities',
-            'allDocuments', 'allCertificates', 'allActivities', 'allUsers', 'allSignatures', 'allTeams', 'allApiKeys'
+            'allDocuments', 'allCertificates', 'allActivities', 'allUsers', 'allSignatures', 'allTeams', 'allApiKeys',
+            'notifications', 'unreadNotifsCount'
         ));
     });
 
@@ -117,6 +157,14 @@ Route::middleware('auth')->group(function () {
             'action' => 'upload',
             'description' => $currentUser->name . ' mengunggah dokumen baru: ' . $title,
             'ip_address' => $request->ip(),
+        ]);
+
+        Notification::create([
+            'user_id' => $currentUser->id,
+            'title' => 'Dokumen Diunggah',
+            'message' => 'Dokumen "' . $title . '" berhasil diunggah dengan status draft.',
+            'type' => 'success',
+            'link' => 'documents',
         ]);
         
         return redirect('/?tab=documents')->with('success', 'Dokumen "' . $title . '" berhasil diunggah!');
@@ -148,6 +196,24 @@ Route::middleware('auth')->group(function () {
             'description' => $currentUser->name . ' meminta tanda tangan untuk dokumen: ' . $doc->title . ' kepada ' . $signer->name,
             'ip_address' => $request->ip(),
         ]);
+
+        // Notify the signer
+        Notification::create([
+            'user_id' => $signer->id,
+            'title' => 'Permintaan Tanda Tangan Baru',
+            'message' => $currentUser->name . ' meminta Anda menandatangani dokumen "' . $doc->title . '".',
+            'type' => 'warning',
+            'link' => 'signatures',
+        ]);
+
+        // Notify the sender
+        Notification::create([
+            'user_id' => $currentUser->id,
+            'title' => 'Permintaan Tanda Tangan Terkirim',
+            'message' => 'Permintaan tanda tangan untuk "' . $doc->title . '" berhasil dikirim ke ' . $signer->name . '.',
+            'type' => 'info',
+            'link' => 'signatures',
+        ]);
         
         return redirect('/?tab=signatures')->with('success', 'Permintaan tanda tangan untuk "' . $doc->title . '" berhasil dikirim ke ' . $signer->name . '!');
     });
@@ -172,6 +238,26 @@ Route::middleware('auth')->group(function () {
             'description' => $sig->signer->name . ' menandatangani dokumen: ' . $doc->title,
             'ip_address' => $request->ip(),
         ]);
+
+        // Notify the signer of success
+        Notification::create([
+            'user_id' => $sig->signer_id,
+            'title' => 'Dokumen Berhasil Ditandatangani',
+            'message' => 'Anda telah berhasil menandatangani dokumen "' . $doc->title . '".',
+            'type' => 'success',
+            'link' => 'signatures',
+        ]);
+
+        // Notify the document owner (uploader)
+        if ($doc->uploaded_by_id) {
+            Notification::create([
+                'user_id' => $doc->uploaded_by_id,
+                'title' => 'Dokumen Telah Ditandatangani',
+                'message' => $sig->signer->name . ' telah menandatangani dokumen Anda "' . $doc->title . '".',
+                'type' => 'success',
+                'link' => 'documents',
+            ]);
+        }
         
         return redirect('/?tab=signatures')->with('success', 'Dokumen "' . $doc->title . '" berhasil ditandatangani!');
     });
@@ -206,6 +292,26 @@ Route::middleware('auth')->group(function () {
             'description' => $currentUser->name . ' menerbitkan sertifikat digital: ' . $cert->name . ' untuk ' . $cert->holder,
             'ip_address' => $request->ip(),
         ]);
+
+        Notification::create([
+            'user_id' => $currentUser->id,
+            'title' => 'Sertifikat Berhasil Diterbitkan',
+            'message' => 'Sertifikat "' . $cert->name . '" untuk ' . $cert->holder . ' berhasil diterbitkan.',
+            'type' => 'success',
+            'link' => 'certificates',
+        ]);
+
+        // If holder matches any user, also notify them!
+        $holderUser = User::where('name', $request->holder)->first();
+        if ($holderUser) {
+            Notification::create([
+                'user_id' => $holderUser->id,
+                'title' => 'Sertifikat Baru Diterbitkan',
+                'message' => 'Selamat, sertifikat digital "' . $cert->name . '" Anda telah diterbitkan secara resmi.',
+                'type' => 'success',
+                'link' => 'certificates',
+            ]);
+        }
         
         return redirect('/?tab=certificates')->with('success', 'Sertifikat untuk "' . $cert->holder . '" berhasil diterbitkan!');
     });
@@ -384,6 +490,14 @@ Route::middleware('auth')->group(function () {
             'description' => $currentUser->name . ' menambahkan ' . $newMember->name . ' (' . $request->role . ') ke dalam tim: ' . $team->name,
             'ip_address' => $request->ip(),
         ]);
+
+        Notification::create([
+            'user_id' => $request->user_id,
+            'title' => 'Ditambahkan ke Tim Baru',
+            'message' => $currentUser->name . ' menambahkan Anda ke dalam tim "' . $team->name . '" sebagai ' . $request->role . '.',
+            'type' => 'info',
+            'link' => 'teams',
+        ]);
         
         return redirect('/?tab=teams')->with('success', $newMember->name . ' berhasil ditambahkan ke tim "' . $team->name . '"!');
     });
@@ -467,4 +581,46 @@ Route::middleware('auth')->group(function () {
         return redirect('/?tab=integrations')->with('success', 'API Key "' . $name . '" berhasil dihapus.');
     });
 
+    Route::post('/upgrade', function (Request $request) {
+        $currentUser = Auth::user();
+        
+        $request->validate([
+            'plan' => 'required|in:free,secure,enterprise',
+        ]);
+        
+        $planName = $request->plan;
+        $currentUser->update(['plan' => $planName]);
+        
+        ActivityLog::create([
+            'user_id' => $currentUser->id,
+            'action' => 'update',
+            'description' => $currentUser->name . ' berhasil melakukan upgrade akun ke paket: LEXA ' . ucfirst($planName) . ' Plan',
+            'ip_address' => $request->ip(),
+        ]);
+
+        Notification::create([
+            'user_id' => $currentUser->id,
+            'title' => 'Upgrade Paket Sukses',
+            'message' => 'Selamat! Akun Anda berhasil ditingkatkan ke paket LEXA ' . ucfirst($planName) . ' Plan. Nikmati fitur premium sekarang.',
+            'type' => 'success',
+            'link' => 'settings',
+        ]);
+        
+        $displayName = $planName === 'secure' ? 'LEXA Secure Plan' : ($planName === 'enterprise' ? 'LEXA Enterprise Plan' : 'Free Plan');
+        
+        return redirect()->back()->with('success', 'Akun Anda berhasil diperbarui ke ' . $displayName . '!');
+    });
+
+    Route::post('/notifications/{id}/read', function ($id) {
+        $notif = Notification::where('user_id', Auth::id())->findOrFail($id);
+        $notif->update(['is_read' => true]);
+        return response()->json(['success' => true]);
+    });
+
+    Route::post('/notifications/read-all', function () {
+        Notification::where('user_id', Auth::id())->where('is_read', false)->update(['is_read' => true]);
+        return response()->json(['success' => true]);
+    });
+
 });
+
