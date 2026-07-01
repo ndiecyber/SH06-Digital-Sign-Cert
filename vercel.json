@@ -1,5 +1,13 @@
 {
     "version": 2,
+    "env": {
+        "APP_DEBUG": "true",
+        "LOG_CHANNEL": "stderr",
+        "VIEW_COMPILED_PATH": "/tmp/views",
+        "CACHE_STORE": "array",
+        "SESSION_DRIVER": "cookie",
+        "QUEUE_CONNECTION": "sync"
+    },
     "builds": [
         {
             "src": "api/index.php",
