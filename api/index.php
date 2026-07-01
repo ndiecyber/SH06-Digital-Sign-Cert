@@ -1,21 +1,30 @@
 <?php
 
-// Vercel serverless environment adjustments
-if (getenv('VERCEL')) {
-    putenv('LOG_CHANNEL=stderr');
-    putenv('VIEW_COMPILED_PATH=/tmp/views');
-    putenv('SESSION_DRIVER=cookie');
-    putenv('APP_DEBUG=true');
-    
-    $_ENV['LOG_CHANNEL'] = $_SERVER['LOG_CHANNEL'] = 'stderr';
-    $_ENV['VIEW_COMPILED_PATH'] = $_SERVER['VIEW_COMPILED_PATH'] = '/tmp/views';
-    $_ENV['SESSION_DRIVER'] = $_SERVER['SESSION_DRIVER'] = 'cookie';
-    $_ENV['APP_DEBUG'] = $_SERVER['APP_DEBUG'] = 'true';
-    
-    if (!is_dir('/tmp/views')) {
-        mkdir('/tmp/views', 0777, true);
-    }
+use Illuminate\Foundation\Application;
+use Illuminate\Http\Request;
 
+define('LARAVEL_START', microtime(true));
+
+require __DIR__ . '/../vendor/autoload.php';
+
+/** @var Application $app */
+$app = require_once __DIR__ . '/../bootstrap/app.php';
+
+$app->useStoragePath('/tmp/storage');
+
+if (!is_dir('/tmp/storage/framework/views')) {
+    mkdir('/tmp/storage/framework/views', 0777, true);
+}
+
+if (!is_dir('/tmp/storage/framework/cache')) {
+    mkdir('/tmp/storage/framework/cache', 0777, true);
+}
+
+if (!is_dir('/tmp/storage/framework/sessions')) {
+    mkdir('/tmp/storage/framework/sessions', 0777, true);
+}
+
+if (getenv('VERCEL')) {
     // Copy SQLite database to /tmp so it's writable
     $dbPath = __DIR__ . '/../database/database.sqlite';
     $tmpDbPath = '/tmp/database.sqlite';
@@ -23,9 +32,8 @@ if (getenv('VERCEL')) {
         copy($dbPath, $tmpDbPath);
         chmod($tmpDbPath, 0666);
     }
-    
     putenv('DB_DATABASE=' . $tmpDbPath);
     $_ENV['DB_DATABASE'] = $_SERVER['DB_DATABASE'] = $tmpDbPath;
 }
 
-require __DIR__ . '/../public/index.php';
+$app->handleRequest(Request::capture());
