@@ -5,10 +5,12 @@ if (getenv('VERCEL')) {
     putenv('LOG_CHANNEL=stderr');
     putenv('VIEW_COMPILED_PATH=/tmp/views');
     putenv('SESSION_DRIVER=cookie');
+    putenv('APP_DEBUG=true');
     
     $_ENV['LOG_CHANNEL'] = $_SERVER['LOG_CHANNEL'] = 'stderr';
     $_ENV['VIEW_COMPILED_PATH'] = $_SERVER['VIEW_COMPILED_PATH'] = '/tmp/views';
     $_ENV['SESSION_DRIVER'] = $_SERVER['SESSION_DRIVER'] = 'cookie';
+    $_ENV['APP_DEBUG'] = $_SERVER['APP_DEBUG'] = 'true';
     
     if (!is_dir('/tmp/views')) {
         mkdir('/tmp/views', 0777, true);
