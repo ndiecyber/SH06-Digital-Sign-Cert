@@ -16,6 +16,10 @@ class Signature extends Model
         'ip_address',
     ];
 
+    protected $casts = [
+        'signed_at' => 'datetime',
+    ];
+
     public function document()
     {
         return $this->belongsTo(Document::class);

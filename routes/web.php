@@ -132,24 +132,25 @@ Route::middleware('auth')->group(function () {
         ));
     });
 
+    // Upload Dokumen - Simpan File ke Storage
     Route::post('/documents', function (Request $request) {
         $currentUser = Auth::user();
         
-        $title = $request->input('file_name');
-        if ($request->hasFile('file')) {
-            $title = $request->file('file')->getClientOriginalName();
-        }
+        // Validasi file upload
+        $request->validate([
+            'file' => 'required|file|mimes:pdf,docx,xlsx|max:10240', // Max 10MB
+        ]);
         
-        if (!$title) {
-            $title = 'Dokumen Baru_' . time() . '.pdf';
-        }
+        // Simpan file ke storage
+        $filePath = $request->file('file')->store('documents');
+        $title = $request->file('file')->getClientOriginalName();
         
         $doc = Document::create([
             'title' => $title,
             'type' => $request->input('type', 'General'),
             'status' => 'draft',
             'uploaded_by_id' => $currentUser->id,
-            'file_path' => 'documents/' . time() . '_' . $title,
+            'file_path' => $filePath,
         ]);
         
         ActivityLog::create([
@@ -218,8 +219,19 @@ Route::middleware('auth')->group(function () {
         return redirect('/?tab=signatures')->with('success', 'Permintaan tanda tangan untuk "' . $doc->title . '" berhasil dikirim ke ' . $signer->name . '!');
     });
 
+    // Validasi Signer saat Tanda Tangan
     Route::post('/signatures/{id}/sign', function (Request $request, $id) {
         $sig = Signature::findOrFail($id);
+        
+        // Validasi: hanya signer yang ditunjuk yang bisa tanda tangan
+        if ($sig->signer_id !== Auth::id()) {
+            return redirect('/?tab=signatures')->with('error', 'Anda tidak memiliki izin untuk menandatangani dokumen ini.');
+        }
+        
+        // Validasi: cek apakah sudah ditandatangani sebelumnya
+        if (!is_null($sig->signed_at)) {
+            return redirect('/?tab=signatures')->with('error', 'Dokumen ini sudah Anda tandatangani sebelumnya.');
+        }
         
         $sig->update([
             'signed_at' => now(),
@@ -316,19 +328,23 @@ Route::middleware('auth')->group(function () {
         return redirect('/?tab=certificates')->with('success', 'Sertifikat untuk "' . $cert->holder . '" berhasil diterbitkan!');
     });
 
+    // Verifikasi Dokumen dengan Hash SHA-256
     Route::post('/verify', function (Request $request) {
-        $title = $request->input('file_name');
-        if ($request->hasFile('file')) {
-            $title = $request->file('file')->getClientOriginalName();
-        }
-        
-        if (!$title) {
+        // Validasi file upload
+        if (!$request->hasFile('file')) {
             return response()->json([
                 'verified' => false,
-                'message' => 'File tidak valid atau tidak terbaca.'
+                'message' => 'Silakan upload file PDF untuk diverifikasi.'
             ]);
         }
         
+        $file = $request->file('file');
+        $title = $file->getClientOriginalName();
+        
+        // Hitung hash file SHA-256 untuk verifikasi
+        $fileHash = hash_file('sha256', $file->getPathname());
+        
+        // Cari dokumen berdasarkan nama file
         $doc = Document::where('status', 'signed')
             ->where('title', 'like', '%' . $title . '%')
             ->first();
@@ -349,7 +365,8 @@ Route::middleware('auth')->group(function () {
                 'signer' => $signerNames ?: 'Rizky Pratama',
                 'email' => $signerEmails ?: 'rizky@lexa.com',
                 'timestamp' => $timestamp . ' WIB',
-                'ca' => 'Balai Sertifikasi Elektronik (BSrE) CA'
+                'ca' => 'Balai Sertifikasi Elektronik (BSrE) CA',
+                'file_hash' => $fileHash
             ]);
         } else {
             return response()->json([
@@ -623,4 +640,3 @@ Route::middleware('auth')->group(function () {
     });
 
 });
-

@@ -14,6 +14,8 @@
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+     <!-- Browser Icon -->
+    <link rel="icon" type="image/jpeg" href="{{ asset('logo.jpeg') }}">
     
     <script>
         tailwind.config = {
@@ -162,6 +164,7 @@
                 verifying: false,
                 verified: false,
                 verifyFileName: '',
+                verifyFile: null,
                 verifyDetails: null,
                 selectedTeam: { id: null, name: '', description: '', members: [] },
                 teamName: '',
@@ -382,19 +385,20 @@
                 },
                 
                 simuleVerify() {
-                    let fName = this.verifyFileName;
-                    if (!fName) {
-                        this.showToast('Silakan unggah dokumen PDF untuk diverifikasi.', 'error');
+                    // Cek apakah file sudah dipilih
+                    if (!this.verifyFile) {
+                        this.showToast('Silakan pilih file PDF terlebih dahulu.', 'error');
                         return;
                     }
+    
                     this.verifying = true;
                     this.verified = false;
                     this.verifyDetails = null;
-
+    
                     let formData = new FormData();
-                    formData.append('file_name', fName);
+                    formData.append('file', this.verifyFile); // <--- KIRIM FILE ASLINYA KE SINI
                     formData.append('_token', '{{ csrf_token() }}');
-
+    
                     fetch('/verify', {
                         method: 'POST',
                         body: formData
@@ -412,8 +416,8 @@
                         }
                     })
                     .catch(err => {
-                        this.verifying = false;
-                        this.showToast('Koneksi server gagal.', 'error');
+                       this.verifying = false;
+                       this.showToast('Koneksi server gagal.', 'error');
                     });
                 }
             }));
@@ -445,8 +449,8 @@
     <aside class="bg-primary-950 text-white w-64 flex flex-col h-full transition-all duration-300 relative z-20" :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full absolute'">
         <!-- Logo -->
         <div class="p-6 flex items-center space-x-3">
-            <div class="bg-blue-600 p-1.5 rounded-lg">
-                <i class="ph-bold ph-pen-nib text-xl"></i>
+            <div class="flex items-center space-x-3">
+                <img src="{{ asset('logo-pt.png') }}" alt="Logo PT" class="w-10 h-10 rounded-lg object-cover">
             </div>
             <div>
                 <h1 class="text-xl font-bold tracking-wide">LEXA</h1>
@@ -512,7 +516,7 @@
         <div class="px-4 py-4">
             @if(($currentUser->plan ?? 'free') === 'secure')
             <!-- Secure Plan Active Card -->
-            <div class="bg-gradient-to-br from-indigo-950 to-slate-900 border border-indigo-500/30 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-indigo-950/50">
+            <div class="bg-linear-to-br from-indigo-950 to-slate-900 border border-indigo-500/30 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-indigo-950/50">
                 <div class="absolute top-0 right-0 w-16 h-16 bg-emerald-500 rounded-full blur-3xl opacity-15"></div>
                 <div class="flex items-center justify-between mb-3">
                     <div class="flex items-center space-x-2">
@@ -531,7 +535,7 @@
                         <span>10 GB (18%)</span>
                     </div>
                     <div class="w-full bg-indigo-950/60 rounded-full h-1.5 overflow-hidden border border-indigo-800/40">
-                        <div class="bg-gradient-to-r from-indigo-500 to-emerald-500 h-1.5 rounded-full" style="width: 18%"></div>
+                        <div class="bg-linear-to-r from-indigo-500 to-emerald-500 h-1.5 rounded-full" style="width: 18%"></div>
                     </div>
                 </div>
                 <button @click="upgradePlanModal = true" class="w-full bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500/40 text-indigo-100 hover:text-white text-xs font-semibold py-1.5 rounded-lg transition-all duration-200">
@@ -540,7 +544,7 @@
             </div>
             @elseif(($currentUser->plan ?? 'free') === 'enterprise')
             <!-- Enterprise Plan Active Card -->
-            <div class="bg-gradient-to-br from-purple-950 to-slate-900 border border-purple-500/30 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-purple-950/50">
+            <div class="bg-linear-to-br from-purple-950 to-slate-900 border border-purple-500/30 rounded-2xl p-4 relative overflow-hidden shadow-lg shadow-purple-950/50">
                 <div class="absolute top-0 right-0 w-16 h-16 bg-fuchsia-500 rounded-full blur-3xl opacity-15"></div>
                 <div class="flex items-center justify-between mb-3">
                     <div class="flex items-center space-x-2">
@@ -559,7 +563,7 @@
                         <span>Unlimited</span>
                     </div>
                     <div class="w-full bg-purple-950/60 rounded-full h-1.5 overflow-hidden border border-purple-800/40">
-                        <div class="bg-gradient-to-r from-purple-500 to-fuchsia-500 h-1.5 rounded-full" style="width: 35%"></div>
+                        <div class="bg-linear-to-r from-purple-500 to-fuchsia-500 h-1.5 rounded-full" style="width: 35%"></div>
                     </div>
                 </div>
                 <button @click="upgradePlanModal = true" class="w-full bg-purple-600/30 hover:bg-purple-600/50 border border-purple-500/40 text-purple-100 hover:text-white text-xs font-semibold py-1.5 rounded-lg transition-all duration-200">
@@ -568,7 +572,7 @@
             </div>
             @else
             <!-- Free Plan (Default) Upgrade Card -->
-            <div class="bg-gradient-to-br from-blue-900 to-primary-950 border border-blue-800 rounded-2xl p-4 relative overflow-hidden">
+            <div class="bg-linear-to-br from-blue-900 to-primary-950 border border-blue-800 rounded-2xl p-4 relative overflow-hidden">
                 <div class="absolute top-0 right-0 w-16 h-16 bg-blue-500 rounded-full blur-3xl opacity-20"></div>
                 <div class="flex items-center space-x-2 mb-2">
                     <i class="ph-fill ph-crown text-yellow-400 text-xl"></i>
@@ -615,7 +619,7 @@
                 </button>
                 <div>
                     <h2 class="text-2xl font-bold text-slate-800 flex items-center">
-                        Welcome back, {{ explode(' ', $currentUser->name ?? 'Rizky')[0] }}! <span class="ml-2 text-2xl">👋</span>
+                        Welcome back,{{ explode(' ', $currentUser->name ?? 'Rizky')[0] }}! <span class="ml-2 text-2xl">👋</span>
                     </h2>
                     <p class="text-sm text-slate-500 mt-0.5">Kelola dokumen, tanda tangan digital, dan sertifikat Anda dengan aman.</p>
                 </div>
@@ -699,7 +703,7 @@
                                     <!-- Content -->
                                     <div class="flex-1 min-w-0">
                                         <p class="text-xs font-bold text-slate-800 truncate" :class="!notif.is_read ? 'text-indigo-950 font-extrabold' : ''" x-text="notif.title"></p>
-                                        <p class="text-[10px] text-slate-500 mt-0.5 leading-relaxed break-words" x-text="notif.message"></p>
+                                        <p class="text-[10px] text-slate-500 mt-0.5 leading-relaxed wrap-break-words" x-text="notif.message"></p>
                                         <span class="text-[9px] text-slate-400 mt-1.5 block font-mono" x-text="getRelativeTime(notif.created_at)"></span >
                                     </div>
 
@@ -862,7 +866,7 @@
                         
                         <div class="flex flex-col md:flex-row gap-8 items-center h-64">
                             <!-- Donut Chart Canvas Container -->
-                            <div class="relative w-48 h-48 flex-shrink-0">
+                            <div class="relative w-48 h-48 shrink-0">
                                 <canvas id="donutChart"></canvas>
                                 <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                                     <span class="text-2xl font-bold text-slate-800" x-text="stats.totalDocs">{{ $totalDocs }}</span>
@@ -1092,7 +1096,7 @@
                                 <a href="#" class="text-xs font-semibold text-indigo-600 hover:text-indigo-700 bg-indigo-50 hover:bg-indigo-100/80 px-3 py-1.5 rounded-lg transition-colors">View All</a>
                             </div>
                             <div class="flex items-center space-x-6">
-                                <div class="relative w-24 h-24 flex-shrink-0">
+                                <div class="relative w-24 h-24 shrink-0">
                                     <canvas id="certDonutChart"></canvas>
                                     <div class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                                         <span class="text-xl font-bold text-slate-800 font-outfit">{{ $activeCerts }}</span>
@@ -2382,7 +2386,7 @@ print(response.json())</pre>
             <template x-if="generatedKey">
                 <div class="space-y-4">
                     <div class="bg-amber-50 border border-amber-200 p-3.5 rounded-2xl text-xs text-amber-800 leading-relaxed flex items-start space-x-2.5">
-                        <i class="ph ph-warning-octagon text-xl text-amber-600 flex-shrink-0 mt-0.5"></i>
+                        <i class="ph ph-warning-octagon text-xl text-amber-600 shrink-0 mt-0.5"></i>
                         <span>
                             <strong>Perhatian:</strong> Salin token API di bawah ini sekarang. Demi keamanan, token ini tidak akan ditampilkan kembali setelah Anda menutup modal ini.
                         </span>
@@ -2415,7 +2419,7 @@ print(response.json())</pre>
             </div>
             <div class="space-y-4">
                 <div class="border-2 border-dashed border-indigo-200 hover:border-indigo-400 rounded-2xl p-6 text-center cursor-pointer bg-indigo-50/20 transition-all relative">
-                    <input type="file" @change="verifyFileName = $event.target.files[0].name" class="absolute inset-0 opacity-0 cursor-pointer">
+                    <input type="file" @change="verifyFile = $event.target.files[0]; verifyFileName = $event.target.files[0].name" class="absolute inset-0 opacity-0 cursor-pointer">
                     <i class="ph ph-shield-check text-3xl text-indigo-500 mb-2"></i>
                     <p class="text-sm font-semibold text-slate-700">Drag & Drop or Click to browse</p>
                     <p class="text-xs text-slate-400 mt-1">Pilih file PDF yang sudah ditandatangani</p>
@@ -2474,7 +2478,7 @@ print(response.json())</pre>
                     <i class="ph-fill ph-crown"></i>
                     <span>LEXA Subscription Program</span>
                 </div>
-                <h2 class="text-3xl md:text-4xl font-bold font-outfit tracking-tight bg-gradient-to-r from-white via-indigo-200 to-indigo-400 bg-clip-text text-transparent">
+                <h2 class="text-3xl md:text-4xl font-bold font-outfit tracking-tight bg-linear-to-r from-white via-indigo-200 to-indigo-400 bg-clip-text text-transparent">
                     Pilih Proteksi Terbaik Dokumen Anda
                 </h2>
                 <p class="text-slate-400 text-sm mt-3 leading-relaxed">
@@ -2546,8 +2550,8 @@ print(response.json())</pre>
                 </div>
 
                 <!-- Plan 2: Secure Plan (Recommended) -->
-                <div class="bg-gradient-to-b from-indigo-950/50 to-slate-950/60 border-2 border-indigo-500 rounded-2xl p-6 flex flex-col justify-between relative shadow-xl shadow-indigo-500/5 hover:scale-[1.02] transition-all duration-300">
-                    <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-indigo-500 to-purple-500 text-white text-[10px] font-extrabold uppercase px-3 py-1 rounded-full tracking-wider shadow">
+                <div class="bg-linear-to-b from-indigo-950/50 to-slate-950/60 border-2 border-indigo-500 rounded-2xl p-6 flex flex-col justify-between relative shadow-xl shadow-indigo-500/5 hover:scale-[1.02] transition-all duration-300">
+                    <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-linear-to-r from-indigo-500 to-purple-500 text-white text-[10px] font-extrabold uppercase px-3 py-1 rounded-full tracking-wider shadow">
                         Paling Populer
                     </div>
                     
@@ -2608,7 +2612,7 @@ print(response.json())</pre>
                             checkoutModal = true;
                             paymentSuccess = false;
                             processingPayment = false;
-                        " class="w-full bg-gradient-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs font-bold py-3 rounded-xl transition duration-250 text-center shadow-lg shadow-indigo-600/30" x-show="currentPlan !== 'secure'">
+                        " class="w-full bg-linear-to-r from-indigo-500 to-indigo-600 hover:from-indigo-600 hover:to-indigo-700 text-white text-xs font-bold py-3 rounded-xl transition duration-250 text-center shadow-lg shadow-indigo-600/30" x-show="currentPlan !== 'secure'">
                             Upgrade Sekarang
                         </button>
                     </div>
@@ -2916,7 +2920,7 @@ print(response.json())</pre>
          x-transition:leave-end="opacity-0"
          class="fixed bottom-5 right-5 z-50 flex items-center p-4 w-full max-w-xs text-slate-800 bg-white/95 backdrop-blur rounded-2xl border border-slate-100 shadow-xl"
          role="alert" style="display: none;">
-        <div class="inline-flex flex-shrink-0 justify-center items-center w-8 h-8 rounded-xl"
+        <div class="inline-flex shrink-0 justify-center items-center w-8 h-8 rounded-xl"
              :class="{
                  'bg-emerald-50 text-emerald-600 border border-emerald-100': toastType === 'success',
                  'bg-blue-50 text-blue-600 border border-blue-100': toastType === 'info',
