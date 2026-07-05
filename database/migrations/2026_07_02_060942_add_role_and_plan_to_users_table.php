@@ -9,8 +9,8 @@ return new class extends Migration
     /**
      * Run the migrations.
      * 
-     * NOTE: Kolom 'plan' sudah ada di migration create_users_table.php
-     * Migration ini dikosongkan untuk menghindari duplikasi.
+     * NOTE: Kolom 'role' dan 'plan' sudah ada di migration create_users_table.php
+     * Migration ini dikosongkan untuk menghindari duplikasi kolom.
      */
     public function up(): void
     {

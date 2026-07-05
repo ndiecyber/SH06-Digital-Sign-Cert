@@ -16,7 +16,7 @@ class DatabaseSeeder extends Seeder
     public function run(): void
     {
         // Create Admin User
-        User::factory()->create([
+        $admin = User::factory()->create([
             'name' => 'Rizky Pratama',
             'email' => 'admin@lexa.com',
             'password' => bcrypt('password'),
@@ -24,11 +24,17 @@ class DatabaseSeeder extends Seeder
         ]);
 
         // Create Regular User
-        User::factory()->create([
+        $user = User::factory()->create([
             'name' => 'Budi Santoso',
             'email' => 'user@lexa.com',
             'password' => bcrypt('password'),
             'role' => 'user',
         ]);
+
+        // Generate dummy data using factories
+        \App\Models\Document::factory(10)->create();
+        \App\Models\Certificate::factory(10)->create();
+        \App\Models\Signature::factory(10)->create();
+        \App\Models\ActivityLog::factory(20)->create();
     }
 }
