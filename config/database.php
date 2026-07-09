@@ -25,8 +25,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | Below are all of the database connections defined for your application.
-    | An example configuration is provided for each database system which
-    | is supported by Laravel. You're free to add / remove connections.
+    | An example configuration is provided for each database system which is
+    | supported by Laravel. You're free to add / remove connections.
     |
     */
 
@@ -96,7 +96,7 @@ return [
             'prefix' => '',
             'prefix_indexes' => true,
             'search_path' => 'public',
-            'sslmode' => env('DB_SSLMODE', 'prefer'),
+            'sslmode' => env('DB_SSLMODE', 'require'),
         ],
 
         'sqlsrv' => [
