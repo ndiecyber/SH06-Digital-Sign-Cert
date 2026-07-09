@@ -99,40 +99,21 @@ export default function Sidebar({ currentTab, setCurrentTab, isOpen }) {
                                 {getSwitchableAccounts().map((acc) => (
                                     <div 
                                         key={acc.email}
-                                        className="flex items-center justify-between p-1 hover:bg-white/5 rounded-xl transition-colors group/item"
+                                        onClick={() => {
+                                            switchAccount(acc.email);
+                                            setShowSwitchDropdown(false);
+                                        }}
+                                        className="flex items-center space-x-2.5 p-2 hover:bg-white/5 rounded-xl cursor-pointer transition-colors"
                                     >
-                                        <div 
-                                            onClick={() => {
-                                                switchAccount(acc.email);
-                                                setShowSwitchDropdown(false);
-                                            }}
-                                            className="flex items-center space-x-2.5 p-1 cursor-pointer flex-1 min-w-0"
-                                        >
-                                            <img 
-                                                src={`https://ui-avatars.com/api/?name=${encodeURIComponent(acc.name)}&background=0D8ABC&color=fff&size=32`} 
-                                                alt={acc.name} 
-                                                className="w-7 h-7 rounded-full border border-slate-700"
-                                            />
-                                            <div className="truncate flex-1">
-                                                <h5 className="text-xs font-semibold text-white truncate leading-tight">{acc.name}</h5>
-                                                <span className="text-[9px] text-slate-400 font-mono truncate block leading-none">{acc.email}</span>
-                                            </div>
+                                        <img 
+                                            src={`https://ui-avatars.com/api/?name=${encodeURIComponent(acc.name)}&background=0D8ABC&color=fff&size=32`} 
+                                            alt={acc.name} 
+                                            className="w-7 h-7 rounded-full border border-slate-700"
+                                        />
+                                        <div className="truncate flex-1">
+                                            <h5 className="text-xs font-semibold text-white truncate leading-tight">{acc.name}</h5>
+                                            <span className="text-[9px] text-slate-400 font-mono truncate block leading-none">{acc.email}</span>
                                         </div>
-                                        <button 
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (confirm(`Logout dari akun ${acc.name} (${acc.email})?`)) {
-                                                    logout(acc.email);
-                                                }
-                                            }}
-                                            className="p-1.5 hover:bg-rose-500/10 text-slate-400 hover:text-rose-400 rounded-lg transition-colors cursor-pointer mr-1"
-                                            title="Logout dari akun ini"
-                                        >
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 256 256">
-                                                <path d="M112,128a8,8,0,0,1-8,8H32v56a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V64a16,16,0,0,0-16-16H48A16,16,0,0,0,32,64v56H104A8,8,0,0,1,112,128Z" opacity="0.2"></path>
-                                                <path d="M112,128a8,8,0,0,1-8,8H32v56a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V64a16,16,0,0,0-16-16H48A16,16,0,0,0,32,64v56H104A8,8,0,0,1,112,128Zm112-64V192a24,24,0,0,1-24,24H48a24,24,0,0,1-24-24V136H72a8,8,0,0,0,0-16H24V64A24,24,0,0,1,48,40H200A24,24,0,0,1,224,64ZM208,64a8,8,0,0,0-8-8H48a8,8,0,0,0-8,8v40H200a8,8,0,0,0,8-8V64Z"></path>
-                                            </svg>
-                                        </button>
                                     </div>
                                 ))}
                                 {getSwitchableAccounts().length === 0 && (
