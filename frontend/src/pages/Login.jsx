@@ -70,9 +70,9 @@ export default function Login() {
                                 >
                                     <div className="flex items-center space-x-3 text-left">
                                         <img 
-                                            src={`https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=0D8ABC&color=fff&size=40`}
+                                            src={u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=0D8ABC&color=fff&size=40`}
                                             alt={u.name}
-                                            className="w-9 h-9 rounded-full border border-slate-700"
+                                            className="w-9 h-9 rounded-full border border-slate-700 object-cover"
                                         />
                                         <div className="truncate w-36">
                                             <h4 className="text-xs font-semibold text-white truncate">{u.name}</h4>

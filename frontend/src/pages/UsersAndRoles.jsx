@@ -78,8 +78,8 @@ export default function UsersAndRoles() {
                                         <td class="px-4 py-4">
                                             <div class="flex items-center space-x-2.5">
                                                 <img 
-                                                    class="w-8 h-8 rounded-full border border-slate-250 shadow-sm" 
-                                                    src={`https://ui-avatars.com/api/?name=${encodeURIComponent(userItem.name)}&background=bfdbfe&color=1e3a8a&bold=true`} 
+                                                    class="w-8 h-8 rounded-full border border-slate-200 shadow-sm object-cover" 
+                                                    src={userItem.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(userItem.name)}&background=bfdbfe&color=1e3a8a&bold=true`} 
                                                     alt="User" 
                                                 />
                                                 <span class="font-bold text-slate-800 text-[13px] leading-normal">{userItem.name}</span>

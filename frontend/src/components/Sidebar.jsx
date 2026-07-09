@@ -107,9 +107,9 @@ export default function Sidebar({ currentTab, setCurrentTab, isOpen }) {
                                         className="flex items-center space-x-2.5 p-2 hover:bg-white/5 rounded-xl cursor-pointer transition-colors"
                                     >
                                         <img 
-                                            src={`https://ui-avatars.com/api/?name=${encodeURIComponent(acc.name)}&background=0D8ABC&color=fff&size=32`} 
+                                            src={acc.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(acc.name)}&background=0D8ABC&color=fff&size=32`} 
                                             alt={acc.name} 
-                                            className="w-7 h-7 rounded-full border border-slate-700"
+                                            className="w-7 h-7 rounded-full border border-slate-700 object-cover"
                                         />
                                         <div className="truncate flex-1">
                                             <h5 className="text-xs font-semibold text-white truncate leading-tight">{acc.name}</h5>
@@ -142,9 +142,9 @@ export default function Sidebar({ currentTab, setCurrentTab, isOpen }) {
                 >
                     <div className="flex items-center space-x-3">
                         <img 
-                            src={`https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || 'User')}&background=0D8ABC&color=fff`} 
+                            src={user?.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || 'User')}&background=0D8ABC&color=fff`} 
                             alt="User" 
-                            className="w-10 h-10 rounded-full border-2 border-slate-800"
+                            className="w-10 h-10 rounded-full border-2 border-slate-800 object-cover"
                         />
                         <div className="truncate w-28">
                             <h4 className="text-sm font-semibold text-white leading-tight truncate">{user?.name || 'User'}</h4>

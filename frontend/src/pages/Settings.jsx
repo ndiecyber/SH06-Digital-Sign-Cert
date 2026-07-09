@@ -15,6 +15,13 @@ export default function Settings() {
     const [caProvider, setCaProvider] = useState('BSrE (Badan Siber dan Sandi Negara)');
     const [tsaEndpoint, setTsaEndpoint] = useState('https://tsa.bsre.go.id/rfc3161');
     const [status, setStatus] = useState(null);
+    const [avatar, setAvatar] = useState(user?.avatar || '');
+
+    useEffect(() => {
+        if (user?.avatar) {
+            setAvatar(user.avatar);
+        }
+    }, [user]);
 
 
     const handleRotateKey = () => {
@@ -56,14 +63,50 @@ export default function Settings() {
                     <p className="text-[11px] text-slate-500 mt-0.5">Perbarui nama lengkap, email, dan peran Anda dalam perusahaan.</p>
                 </div>
                 
+                {/* Profile Picture Uploader */}
+                <div className="flex flex-col sm:flex-row items-center space-y-4 sm:space-y-0 sm:space-x-6 pb-4 border-b border-slate-100/60">
+                    <div className="relative group">
+                        <img 
+                            src={avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(user?.name || 'User')}&background=0D8ABC&color=fff&size=100`}
+                            alt="Profile Avatar"
+                            className="w-24 h-24 rounded-full border-2 border-slate-200 object-cover shadow-sm"
+                        />
+                        <label className="absolute inset-0 bg-black/40 hover:bg-black/60 rounded-full flex flex-col items-center justify-center text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-center p-2">
+                            <span>Ubah Foto</span>
+                            <input 
+                                type="file" 
+                                accept="image/*"
+                                onChange={(e) => {
+                                    const file = e.target.files[0];
+                                    if (file) {
+                                        const reader = new FileReader();
+                                        reader.onload = (event) => {
+                                            setAvatar(event.target.result);
+                                        };
+                                        reader.readAsDataURL(file);
+                                    }
+                                }}
+                                className="hidden"
+                            />
+                        </label>
+                    </div>
+                    <div className="text-center sm:text-left space-y-1">
+                        <h4 className="text-sm font-bold text-slate-800 font-outfit">{user?.name}</h4>
+                        <p className="text-xs text-slate-400 font-mono">{user?.email}</p>
+                        <p className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 rounded-lg px-2.5 py-0.5 inline-block capitalize">
+                            {user?.role === 'admin' ? 'Administrator' : 'Staff Member'}
+                        </p>
+                    </div>
+                </div>
+
                 <form onSubmit={(e) => {
                     e.preventDefault();
                     const formData = new FormData(e.target);
                     const name = formData.get('name');
                     const email = formData.get('email');
                     const role = formData.get('role');
-                    updateUser({ name, email, role });
-                    setStatus({ type: 'success', msg: 'Profil berhasil diperbarui!' });
+                    updateUser({ name, email, role, avatar });
+                    setStatus({ type: 'success', msg: 'Profil dan foto berhasil diperbarui!' });
                     setTimeout(() => setStatus(null), 3000);
                 }} className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

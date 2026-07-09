@@ -47,9 +47,17 @@ const setupTables = async () => {
                 password VARCHAR(255) NOT NULL,
                 role VARCHAR(50) DEFAULT 'user',
                 plan VARCHAR(50) DEFAULT 'free',
+                avatar LONGTEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
+
+        // Dynamically add column for existing schemas
+        try {
+            await db.query('ALTER TABLE users ADD COLUMN avatar LONGTEXT');
+        } catch (e) {
+            // Ignore if column already exists
+        }
 
         // 2. Documents Table
         await db.query(`

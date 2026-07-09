@@ -52,11 +52,11 @@ app.post('/api/auth/register', async (req, res) => {
 
 // Update profile settings
 app.put('/api/auth/user', async (req, res) => {
-    const { email, name, role } = req.body;
+    const { email, name, role, avatar } = req.body;
     try {
         await db.query(
-            'UPDATE users SET name = ?, role = ? WHERE email = ?',
-            [name, role, email]
+            'UPDATE users SET name = ?, role = ?, avatar = ? WHERE email = ?',
+            [name, role, avatar, email]
         );
         const [rows] = await db.query('SELECT * FROM users WHERE email = ?', [email]);
         const { password: _, ...userSession } = rows[0];
