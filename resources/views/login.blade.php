@@ -6,8 +6,9 @@
     <title>LEXA - Login</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Phosphor Icons -->
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script type="module">
+       import '@phosphor-icons/web';
+   </script>
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     
@@ -75,14 +76,14 @@
 
             @if($errors->any())
                 <div class="bg-rose-500/10 border border-rose-500/20 text-rose-200 text-xs p-3.5 rounded-2xl mb-4 leading-relaxed flex items-start space-x-2">
-                    <i class="ph-bold ph-warning text-base flex-shrink-0 mt-0.5"></i>
+                    <i class="ph-bold ph-warning text-base shrink-0 mt-0.5"></i>
                     <span>{{ $errors->first() }}</span>
                 </div>
             @endif
 
             @if(session('success'))
                 <div class="bg-emerald-500/10 border border-emerald-500/20 text-emerald-200 text-xs p-3.5 rounded-2xl mb-4 leading-relaxed flex items-start space-x-2">
-                    <i class="ph-bold ph-check-circle text-base flex-shrink-0 mt-0.5"></i>
+                    <i class="ph-bold ph-check-circle text-base shrink-0 mt-0.5"></i>
                     <span>{{ session('success') }}</span>
                 </div>
             @endif

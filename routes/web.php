@@ -50,16 +50,36 @@ Route::middleware('auth')->group(function () {
     Route::get('/', function () {
         $currentUser = Auth::user();
 
+        // ==========================================
+        // OPTIMASI: Menggabungkan query COUNT menjadi 1 query per tabel
+        // ==========================================
+        
+        // 1 Query untuk semua status dokumen
+        $docStats = Document::selectRaw('status, count(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status')
+            ->toArray();
+            
         $totalDocs = Document::count();
-        $signedDocs = Document::where('status', 'signed')->count();
-        $pendingDocs = Document::where('status', 'pending')->count();
-        $draftDocs = Document::where('status', 'draft')->count();
-        $rejectedDocs = Document::where('status', 'rejected')->count();
+        $signedDocs = $docStats['signed'] ?? 0;
+        $pendingDocs = $docStats['pending'] ?? 0;
+        $draftDocs = $docStats['draft'] ?? 0;
+        $rejectedDocs = $docStats['rejected'] ?? 0;
 
+        // 1 Query untuk semua status sertifikat
+        $certStats = Certificate::selectRaw('status, count(*) as total')
+            ->groupBy('status')
+            ->pluck('total', 'status')
+            ->toArray();
+            
         $activeCerts = Certificate::count();
-        $expiredCerts = Certificate::where('status', 'expired')->count();
-        $validCerts = Certificate::where('status', 'valid')->count();
-        $expiringSoonCerts = Certificate::where('status', 'expiring_soon')->count();
+        $validCerts = $certStats['valid'] ?? 0;
+        $expiringSoonCerts = $certStats['expiring_soon'] ?? 0;
+        $expiredCerts = $certStats['expired'] ?? 0;
+
+        // ==========================================
+        // Query lainnya tetap sama (tidak diubah agar frontend tidak error)
+        // ==========================================
 
         $nextExpiry = Certificate::where('status', 'expiring_soon')
             ->orderBy('valid_until', 'asc')
@@ -75,7 +95,7 @@ Route::middleware('auth')->group(function () {
             ->take(3)
             ->get();
 
-        // Load full datasets for all sidebar pages
+        // Load full datasets for all sidebar pages (dibutuhkan oleh Alpine.js di frontend)
         $allDocuments = Document::with(['uploadedBy', 'signatures.signer'])->latest()->get();
         $allCertificates = Certificate::orderBy('valid_until', 'asc')->get();
         $allActivities = ActivityLog::with('user')->latest()->get();
@@ -136,12 +156,10 @@ Route::middleware('auth')->group(function () {
     Route::post('/documents', function (Request $request) {
         $currentUser = Auth::user();
         
-        // Validasi file upload
         $request->validate([
-            'file' => 'required|file|mimes:pdf,docx,xlsx|max:10240', // Max 10MB
+            'file' => 'required|file|mimes:pdf,docx,xlsx|max:10240',
         ]);
         
-        // Simpan file ke storage
         $filePath = $request->file('file')->store('documents');
         $title = $request->file('file')->getClientOriginalName();
         
@@ -198,7 +216,6 @@ Route::middleware('auth')->group(function () {
             'ip_address' => $request->ip(),
         ]);
 
-        // Notify the signer
         Notification::create([
             'user_id' => $signer->id,
             'title' => 'Permintaan Tanda Tangan Baru',
@@ -207,7 +224,6 @@ Route::middleware('auth')->group(function () {
             'link' => 'signatures',
         ]);
 
-        // Notify the sender
         Notification::create([
             'user_id' => $currentUser->id,
             'title' => 'Permintaan Tanda Tangan Terkirim',
@@ -219,16 +235,13 @@ Route::middleware('auth')->group(function () {
         return redirect('/?tab=signatures')->with('success', 'Permintaan tanda tangan untuk "' . $doc->title . '" berhasil dikirim ke ' . $signer->name . '!');
     });
 
-    // Validasi Signer saat Tanda Tangan
     Route::post('/signatures/{id}/sign', function (Request $request, $id) {
         $sig = Signature::findOrFail($id);
         
-        // Validasi: hanya signer yang ditunjuk yang bisa tanda tangan
         if ($sig->signer_id !== Auth::id()) {
             return redirect('/?tab=signatures')->with('error', 'Anda tidak memiliki izin untuk menandatangani dokumen ini.');
         }
         
-        // Validasi: cek apakah sudah ditandatangani sebelumnya
         if (!is_null($sig->signed_at)) {
             return redirect('/?tab=signatures')->with('error', 'Dokumen ini sudah Anda tandatangani sebelumnya.');
         }
@@ -251,7 +264,6 @@ Route::middleware('auth')->group(function () {
             'ip_address' => $request->ip(),
         ]);
 
-        // Notify the signer of success
         Notification::create([
             'user_id' => $sig->signer_id,
             'title' => 'Dokumen Berhasil Ditandatangani',
@@ -260,7 +272,6 @@ Route::middleware('auth')->group(function () {
             'link' => 'signatures',
         ]);
 
-        // Notify the document owner (uploader)
         if ($doc->uploaded_by_id) {
             Notification::create([
                 'user_id' => $doc->uploaded_by_id,
@@ -313,7 +324,6 @@ Route::middleware('auth')->group(function () {
             'link' => 'certificates',
         ]);
 
-        // If holder matches any user, also notify them!
         $holderUser = User::where('name', $request->holder)->first();
         if ($holderUser) {
             Notification::create([
@@ -328,9 +338,7 @@ Route::middleware('auth')->group(function () {
         return redirect('/?tab=certificates')->with('success', 'Sertifikat untuk "' . $cert->holder . '" berhasil diterbitkan!');
     });
 
-    // Verifikasi Dokumen dengan Hash SHA-256
     Route::post('/verify', function (Request $request) {
-        // Validasi file upload
         if (!$request->hasFile('file')) {
             return response()->json([
                 'verified' => false,
@@ -340,11 +348,8 @@ Route::middleware('auth')->group(function () {
         
         $file = $request->file('file');
         $title = $file->getClientOriginalName();
-        
-        // Hitung hash file SHA-256 untuk verifikasi
         $fileHash = hash_file('sha256', $file->getPathname());
         
-        // Cari dokumen berdasarkan nama file
         $doc = Document::where('status', 'signed')
             ->where('title', 'like', '%' . $title . '%')
             ->first();
@@ -379,7 +384,6 @@ Route::middleware('auth')->group(function () {
     Route::delete('/documents/{id}', function ($id) {
         $doc = Document::findOrFail($id);
         $currentUser = Auth::user();
-        
         $title = $doc->title;
         $doc->delete();
         
@@ -396,7 +400,6 @@ Route::middleware('auth')->group(function () {
     Route::delete('/certificates/{id}', function ($id) {
         $cert = Certificate::findOrFail($id);
         $currentUser = Auth::user();
-        
         $name = $cert->name;
         $holder = $cert->holder;
         $cert->delete();
@@ -413,10 +416,7 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/documents/use-template', function (Request $request) {
         $currentUser = Auth::user();
-        
-        $request->validate([
-            'template_name' => 'required|string',
-        ]);
+        $request->validate(['template_name' => 'required|string']);
         
         $templateName = $request->template_name;
         $title = 'Draft - ' . $templateName . '.pdf';
@@ -444,7 +444,6 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/teams', function (Request $request) {
         $currentUser = Auth::user();
-        
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
@@ -471,7 +470,6 @@ Route::middleware('auth')->group(function () {
     Route::delete('/teams/{id}', function ($id) {
         $team = Team::findOrFail($id);
         $currentUser = Auth::user();
-        
         $name = $team->name;
         $team->delete();
         
@@ -538,10 +536,7 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/api-keys', function (Request $request) {
         $currentUser = Auth::user();
-        
-        $request->validate([
-            'name' => 'required|string|max:255',
-        ]);
+        $request->validate(['name' => 'required|string|max:255']);
         
         $rawKey = 'lx_live_' . bin2hex(random_bytes(20));
         
@@ -584,7 +579,6 @@ Route::middleware('auth')->group(function () {
     Route::delete('/api-keys/{id}', function ($id) {
         $key = ApiKey::findOrFail($id);
         $currentUser = Auth::user();
-        
         $name = $key->name;
         $key->delete();
         
@@ -600,10 +594,7 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/upgrade', function (Request $request) {
         $currentUser = Auth::user();
-        
-        $request->validate([
-            'plan' => 'required|in:free,secure,enterprise',
-        ]);
+        $request->validate(['plan' => 'required|in:free,secure,enterprise']);
         
         $planName = $request->plan;
         $currentUser->update(['plan' => $planName]);

@@ -34,6 +34,7 @@ Route::post('/auth/register', function (Request $request) {
     ]);
 
     return response()->json([
+        'success' => true,
         'message' => 'User registered successfully',
         'user' => $user
     ], 201);
@@ -47,10 +48,14 @@ Route::post('/auth/login', function (Request $request) {
     ]);
 
     if (!Auth::attempt($request->only('email', 'password'))) {
-        return response()->json(['message' => 'Invalid credentials'], 401);
+        return response()->json([
+            'success' => false,
+            'message' => 'Invalid credentials'
+        ], 401);
     }
 
     return response()->json([
+        'success' => true,
         'message' => 'Login successful',
         'user' => Auth::user(),
     ]);
