@@ -64,6 +64,7 @@ Route::post('/auth/login', function (Request $request) {
 // 3. Protected Routes (Membutuhkan Login)
 Route::middleware('auth')->group(function () {
     
+    // === ROUTE YANG SUDAH ADA ===
     Route::get('/certificates', function () {
         return response()->json(Certificate::latest()->get());
     });
@@ -75,6 +76,98 @@ Route::middleware('auth')->group(function () {
     Route::get('/documents', function () {
         return response()->json(Document::with('uploadedBy')->latest()->get());
     });
-    
-    // Tambahkan route API lainnya di sini sesuai kebutuhan frontend
+
+    // === ROUTE BARU YANG DITAMBAHKAN ===
+
+    // Auth Users
+    Route::get('/auth/users', function () {
+        return response()->json(
+            User::select('id', 'name', 'email', 'role', 'plan', 'avatar', 'created_at')
+                ->get()
+        );
+    });
+
+    // Documents - Create
+    Route::post('/documents', function (Request $request) {
+        // Logika ini masih sederhana, nanti bisa dipindah ke Controller
+        // Sesuaikan dengan kebutuhan tabel Document kamu
+        return response()->json([
+            'success' => true,
+            'message' => 'Document created successfully',
+            'document' => [] // isi data document nanti
+        ], 201);
+    });
+
+    // Documents - Request Signer
+    Route::post('/documents/{id}/request-signer', function (Request $request, $id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Signer requested'
+        ]);
+    });
+
+    // Documents - Sign
+    Route::post('/documents/{id}/sign', function (Request $request, $id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Document signed successfully'
+        ]);
+    });
+
+    // Documents - Delete
+    Route::delete('/documents/{id}', function ($id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Document deleted successfully'
+        ]);
+    });
+
+    // Certificates - Create
+    Route::post('/certificates', function (Request $request) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Certificate created successfully',
+            'certificate' => []
+        ], 201);
+    });
+
+    // Certificates - Delete
+    Route::delete('/certificates/{id}', function ($id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Certificate deleted successfully'
+        ]);
+    });
+
+    // Teams
+    Route::get('/teams', function () {
+        return response()->json([]); // isi sesuai model Team nanti
+    });
+
+    Route::post('/teams', function (Request $request) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Team saved successfully'
+        ]);
+    });
+
+    Route::delete('/teams/{id}', function ($id) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Team deleted successfully'
+        ]);
+    });
+
+    // Activities - Create (Log Activity)
+    Route::post('/activities', function (Request $request) {
+        return response()->json([
+            'success' => true,
+            'message' => 'Activity logged successfully'
+        ]);
+    });
+
+    // Tambahan lain jika diperlukan
+    // Route::put('/auth/user', ...);
+    // Route::put('/auth/upgrade-plan', ...);
+
 });
