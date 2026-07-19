@@ -80,12 +80,20 @@ Route::middleware('auth')->group(function () {
     // === ROUTE BARU YANG DITAMBAHKAN ===
 
     // Auth Users
-    Route::get('/auth/users', function () {
-        return response()->json(
-            User::select('id', 'name', 'email', 'role', 'plan', 'avatar', 'created_at')
-                ->get()
-        );
-    });
+   // GANTI route ini di dalam middleware('auth')->group
+Route::get('/auth/users', function () {
+    try {
+        $users = User::select('id', 'name', 'email', 'role', 'created_at')
+                     ->get();
+        
+        return response()->json($users);
+    } catch (\Exception $e) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Error fetching users: ' . $e->getMessage()
+        ], 500);
+    }
+});
 
     // Documents - Create
     Route::post('/documents', function (Request $request) {
