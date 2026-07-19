@@ -13,7 +13,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        $middleware->statefulApi(); // PERBAIKAN: aktifkan Sanctum SPA cookie auth di grup 'api'
+        $middleware->statefulApi();
+
+        // INI kuncinya — cara yang BENER buat except CSRF di Laravel 11
+        $middleware->validateCsrfTokens(except: [
+            'api/*',
+        ]);
+
+        $middleware->web(append: [
+            \Illuminate\Http\Middleware\HandleCors::class,
+        ]);
+
+        $middleware->api(prepend: [
+            \Illuminate\Http\Middleware\HandleCors::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->shouldRenderJsonWhen(
