@@ -25,7 +25,8 @@ return [
     'http://localhost:3000',                  // React development (jika pakai Create React App)
     'http://localhost:5173',                  // React development (jika pakai Vite)
     'http://localhost:5174',                  // Vite port alternatif
-    'http://127.0.0.1:8000',                 // Laravel local development
+    'http://127.0.0.1:8000',
+    'http://localhost:8000',                  // Laravel local development
    ],
 
     'allowed_origins_patterns' => [],
