@@ -23,14 +23,27 @@ $resolveUser = function (?Request $request = null) {
         return Auth::user();
     }
     if ($request) {
-        $id = $request->input('uploaded_by_id') ?? $request->input('user_id') ?? $request->input('signer_id');
+        $id = $request->input('uploaded_by_id') 
+            ?? $request->input('user_id') 
+            ?? $request->input('signer_id')
+            ?? $request->header('X-User-Id');
         if ($id) {
             $user = User::find($id);
             if ($user) return $user;
         }
-        $email = $request->input('uploaded_by_email') ?? $request->input('user_email') ?? $request->input('email');
+        $email = $request->input('uploaded_by_email') 
+            ?? $request->input('user_email') 
+            ?? $request->input('email')
+            ?? $request->header('X-User-Email');
         if ($email) {
-            $user = User::where('email', $email)->first();
+            $user = User::whereRaw('LOWER(email) = ?', [strtolower(trim($email))])->first();
+            if ($user) return $user;
+        }
+        $name = $request->input('uploaded_by_name') 
+            ?? $request->input('user_name') 
+            ?? $request->input('name');
+        if ($name) {
+            $user = User::whereRaw('LOWER(name) = ?', [strtolower(trim($name))])->first();
             if ($user) return $user;
         }
     }
@@ -96,9 +109,30 @@ Route::put('/auth/user', function (Request $request) {
 // ============ DOCUMENTS ============
 
 Route::get('/documents', function () {
-    return response()->json(
-        Document::with(['uploadedBy', 'signatures.signer'])->latest()->get()
-    );
+    $docs = Document::with(['uploadedBy', 'signatures.signer'])->latest()->get();
+
+    $mapped = $docs->map(function ($doc) {
+        $targetSigners = $doc->signatures->map(function ($sig) {
+            return [
+                'id' => $sig->signer?->id,
+                'name' => $sig->signer?->name,
+                'email' => $sig->signer?->email,
+                'status' => $sig->signed_at ? 'signed' : 'pending',
+                'signed_at' => $sig->signed_at,
+            ];
+        })->values()->toArray();
+
+        $arr = $doc->toArray();
+        $arr['uploaded_by_id'] = $doc->uploaded_by_id;
+        $arr['uploaded_by_name'] = $doc->uploadedBy?->name ?? 'Pengguna';
+        $arr['uploaded_by_email'] = $doc->uploadedBy?->email ?? '';
+        $arr['target_signers'] = $targetSigners;
+        $arr['target_signer_email'] = $targetSigners[0]['email'] ?? null;
+        $arr['target_signer_name'] = $targetSigners[0]['name'] ?? null;
+        return $arr;
+    });
+
+    return response()->json($mapped);
 });
 
 Route::post('/documents', function (Request $request) use ($resolveUser) {
@@ -207,8 +241,24 @@ Route::post('/documents/{id}/sign', function (Request $request, $id) use ($resol
     $doc = Document::findOrFail($id);
     $user = $resolveUser($request);
 
+    $signerId = $request->input('signer_id') 
+        ?? $request->input('user_id') 
+        ?? $user?->id;
+    $email = $request->input('email') 
+        ?? $request->header('X-User-Email') 
+        ?? $user?->email;
+
     $sig = Signature::where('document_id', $doc->id)
-        ->where('signer_id', $user?->id)
+        ->where(function ($query) use ($signerId, $email) {
+            if ($signerId) {
+                $query->where('signer_id', $signerId);
+            }
+            if ($email) {
+                $query->orWhereHas('signer', function ($q) use ($email) {
+                    $q->whereRaw('LOWER(email) = ?', [strtolower(trim($email))]);
+                });
+            }
+        })
         ->whereNull('signed_at')
         ->first();
 
@@ -224,9 +274,9 @@ Route::post('/documents/{id}/sign', function (Request $request, $id) use ($resol
     }
 
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $user?->id ?? $sig->signer_id,
         'action' => 'signed',
-        'description' => ($user?->name ?? 'Pengguna') . ' menandatangani dokumen: ' . $doc->title,
+        'description' => ($user?->name ?? $sig->signer?->name ?? 'Pengguna') . ' menandatangani dokumen: ' . $doc->title,
         'ip_address' => $request->ip(),
     ]);
 
@@ -333,12 +383,47 @@ Route::get('/teams', function () {
 });
 
 Route::post('/teams', function (Request $request) use ($resolveUser) {
+    $user = $resolveUser($request);
+
+    // If ID is passed, update existing team and its members
+    if ($request->has('id') && $request->id) {
+        $team = Team::find($request->id);
+        if ($team) {
+            if ($request->has('name')) $team->update(['name' => $request->name]);
+            if ($request->has('description')) $team->update(['description' => $request->description]);
+            if ($request->has('members') && is_array($request->members)) {
+                $syncData = [];
+                foreach ($request->members as $m) {
+                    $mId = is_array($m) ? ($m['id'] ?? null) : $m;
+                    $role = is_array($m) ? ($m['pivot']['role'] ?? $m['role'] ?? 'Member') : 'Member';
+                    if ($mId) $syncData[$mId] = ['role' => $role];
+                }
+                $team->members()->sync($syncData);
+            }
+            return response()->json(['success' => true, 'team' => $team->load('members')]);
+        }
+    }
+
     $validated = $request->validate([
         'name' => 'required|string|max:255',
         'description' => 'nullable|string',
     ]);
 
-    $user = $resolveUser($request);
+    // If team with same name exists, update it instead of creating duplicate!
+    $existing = Team::where('name', $validated['name'])->first();
+    if ($existing) {
+        if ($request->has('members') && is_array($request->members)) {
+            $syncData = [];
+            foreach ($request->members as $m) {
+                $mId = is_array($m) ? ($m['id'] ?? null) : $m;
+                $role = is_array($m) ? ($m['pivot']['role'] ?? $m['role'] ?? 'Member') : 'Member';
+                if ($mId) $syncData[$mId] = ['role' => $role];
+            }
+            $existing->members()->sync($syncData);
+        }
+        return response()->json(['success' => true, 'team' => $existing->load('members')]);
+    }
+
     $team = Team::create([
         ...$validated,
         'created_by_id' => $user?->id,
