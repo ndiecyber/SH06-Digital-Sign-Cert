@@ -18,6 +18,37 @@ Route::get('/sanctum/csrf-cookie', function () {
     return response()->json(['csrf' => 'ok']);
 });
 
+Route::get('/health', function () {
+    $dbOk = false;
+    try {
+        \Illuminate\Support\Facades\DB::connection()->getPdo();
+        $dbOk = true;
+    } catch (\Throwable $e) {
+        $dbOk = false;
+    }
+
+    $storageOk = false;
+    try {
+        $testFile = 'health_check.txt';
+        \Illuminate\Support\Facades\Storage::put($testFile, 'ok');
+        \Illuminate\Support\Facades\Storage::delete($testFile);
+        $storageOk = true;
+    } catch (\Throwable $e) {
+        $storageOk = false;
+    }
+
+    $isHealthy = $dbOk && $storageOk;
+
+    return response()->json([
+        'status' => $isHealthy ? 'ok' : 'degraded',
+        'database' => $dbOk ? 'connected' : 'error',
+        'storage' => $storageOk ? 'writable' : 'error',
+        'timestamp' => now()->toIso8601String(),
+        'app' => config('app.name', 'LEXA'),
+        'environment' => config('app.env', 'production'),
+    ], $isHealthy ? 200 : 503);
+});
+
 $resolveUser = function (?Request $request = null) {
     if (Auth::check()) {
         return Auth::user();
@@ -544,7 +575,7 @@ Route::delete('/api-keys/{id}', function ($id) {
 // ============ ACTIVITIES ============
 
 Route::get('/activities', function () {
-    $logs = ActivityLog::with('user')->latest()->get();
+    $logs = ActivityLog::with('user:id,name,email')->latest()->limit(50)->get();
 
     $mapped = $logs->map(function ($log) {
         return [
