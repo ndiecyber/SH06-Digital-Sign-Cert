@@ -12,7 +12,9 @@ use App\Models\Document;
 use App\Models\Signature;
 use App\Models\Team;
 use App\Models\ApiKey;
+use App\Models\Notification;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Cache;
 
 Route::get('/sanctum/csrf-cookie', function () {
     return response()->json(['csrf' => 'ok']);
@@ -49,27 +51,59 @@ Route::get('/health', function () {
     ], $isHealthy ? 200 : 503);
 });
 
-$resolveUser = function (?Request $request = null) {
+$resolveUser = function (?Request $request = null, bool $allowFallback = false) {
     if (Auth::check()) {
         return Auth::user();
     }
     if ($request) {
+        // 1. Client authentication headers (prioritas tertinggi)
+        $headerId = $request->header('X-User-Id');
+        if ($headerId) {
+            $user = User::find($headerId);
+            if ($user) return $user;
+        }
+
+        $headerEmail = $request->header('X-User-Email');
+        if ($headerEmail) {
+            $user = User::whereRaw('LOWER(email) = ?', [strtolower(trim($headerEmail))])->first();
+            if ($user) return $user;
+        }
+
+        // 2. Explicit requester fields in input
         $id = $request->input('uploaded_by_id') 
             ?? $request->input('user_id') 
-            ?? $request->input('signer_id')
-            ?? $request->header('X-User-Id');
+            ?? $request->input('requester_id')
+            ?? $request->input('admin_id');
         if ($id) {
             $user = User::find($id);
             if ($user) return $user;
         }
+
         $email = $request->input('uploaded_by_email') 
             ?? $request->input('user_email') 
-            ?? $request->input('email')
-            ?? $request->header('X-User-Email');
+            ?? $request->input('requester_email')
+            ?? $request->input('admin_email');
         if ($email) {
             $user = User::whereRaw('LOWER(email) = ?', [strtolower(trim($email))])->first();
             if ($user) return $user;
         }
+
+        // 3. Fallback generic signer_id
+        $signerId = $request->input('signer_id');
+        if ($signerId) {
+            $user = User::find($signerId);
+            if ($user) return $user;
+        }
+
+        // 4. Generic email HANYA jika bukan route yang parameternya email target (misal request-signer)
+        if (!$request->is('*request-signer*')) {
+            $genericEmail = $request->input('email');
+            if ($genericEmail) {
+                $user = User::whereRaw('LOWER(email) = ?', [strtolower(trim($genericEmail))])->first();
+                if ($user) return $user;
+            }
+        }
+
         $name = $request->input('uploaded_by_name') 
             ?? $request->input('user_name') 
             ?? $request->input('name');
@@ -78,12 +112,18 @@ $resolveUser = function (?Request $request = null) {
             if ($user) return $user;
         }
     }
-    return User::first();
+    return $allowFallback ? User::first() : null;
+};
+
+$clearCache = function (array $keys = ['api_documents', 'api_certificates', 'api_teams', 'api_keys', 'api_activities', 'api_users']) {
+    foreach ($keys as $key) {
+        Cache::forget($key);
+    }
 };
 
 // ============ AUTH ============
 
-Route::post('/auth/register', function (Request $request) {
+Route::post('/auth/register', function (Request $request) use ($clearCache) {
     $request->validate([
         'name' => 'required|string|max:255',
         'email' => 'required|string|email|max:255|unique:users',
@@ -96,6 +136,8 @@ Route::post('/auth/register', function (Request $request) {
         'password' => Hash::make($request->password),
         'role' => 'user',
     ]);
+
+    $clearCache(['api_users', 'api_activities']);
 
     return response()->json(['success' => true, 'user' => $user], 201);
 });
@@ -116,23 +158,29 @@ Route::post('/auth/login', function (Request $request) {
 });
 
 Route::get('/auth/users', function () {
-    return response()->json(User::all());
+    $users = Cache::remember('api_users', 60, function () {
+        return User::select('id', 'name', 'email', 'role', 'created_at')->get()->toArray();
+    });
+    return response()->json($users);
 });
 
-Route::put('/auth/user', function (Request $request) {
+Route::put('/auth/user', function (Request $request) use ($resolveUser, $clearCache) {
     $request->validate([
         'email' => 'required|email|exists:users,email',
     ]);
 
+    $currentUser = $resolveUser($request);
     $targetUser = User::where('email', $request->email)->firstOrFail();
 
-    $targetUser->update($request->only([
-        'name',
-        'email',
-        'role',
-        'avatar',
-        'visual_signature',
-    ]));
+    $allowedFields = ['name'];
+
+    // Hanya admin yang diizinkan mengubah role pengguna
+    if ($currentUser && $currentUser->role === 'admin') {
+        $allowedFields[] = 'role';
+    }
+
+    $targetUser->update($request->only($allowedFields));
+    $clearCache(['api_users', 'api_activities']);
 
     return response()->json(['success' => true, 'user' => $targetUser->fresh()]);
 });
@@ -140,33 +188,46 @@ Route::put('/auth/user', function (Request $request) {
 // ============ DOCUMENTS ============
 
 Route::get('/documents', function () {
-    $docs = Document::with(['uploadedBy', 'signatures.signer'])->latest()->get();
+    $mapped = Cache::remember('api_documents', 60, function () {
+        $docs = Document::with([
+            'uploadedBy:id,name,email,role',
+            'signatures' => function ($query) {
+                $query->with('signer:id,name,email,role');
+            }
+        ])->latest()->get();
 
-    $mapped = $docs->map(function ($doc) {
-        $targetSigners = $doc->signatures->map(function ($sig) {
-            return [
-                'id' => $sig->signer?->id,
-                'name' => $sig->signer?->name,
-                'email' => $sig->signer?->email,
-                'status' => $sig->signed_at ? 'signed' : 'pending',
-                'signed_at' => $sig->signed_at,
-            ];
-        })->values()->toArray();
+        return $docs->map(function ($doc) {
+            $targetSigners = $doc->signatures->map(function ($sig) use ($doc) {
+                $status = $sig->signed_at 
+                    ? 'signed' 
+                    : ($doc->status === 'rejected' ? 'rejected' : 'pending');
+                return [
+                    'id' => $sig->signer?->id,
+                    'name' => $sig->signer?->name,
+                    'email' => $sig->signer?->email,
+                    'status' => $status,
+                    'signed_at' => $sig->signed_at ? $sig->signed_at->toIso8601String() : null,
+                ];
+            })->values()->toArray();
 
-        $arr = $doc->toArray();
-        $arr['uploaded_by_id'] = $doc->uploaded_by_id;
-        $arr['uploaded_by_name'] = $doc->uploadedBy?->name ?? 'Pengguna';
-        $arr['uploaded_by_email'] = $doc->uploadedBy?->email ?? '';
-        $arr['target_signers'] = $targetSigners;
-        $arr['target_signer_email'] = $targetSigners[0]['email'] ?? null;
-        $arr['target_signer_name'] = $targetSigners[0]['name'] ?? null;
-        return $arr;
+            $latestSigned = $doc->signatures->whereNotNull('signed_at')->sortByDesc('signed_at')->first();
+
+            $arr = $doc->toArray();
+            $arr['uploaded_by_id'] = $doc->uploaded_by_id;
+            $arr['uploaded_by_name'] = $doc->uploadedBy?->name ?? 'Pengguna';
+            $arr['uploaded_by_email'] = $doc->uploadedBy?->email ?? '';
+            $arr['target_signers'] = $targetSigners;
+            $arr['target_signer_email'] = $targetSigners[0]['email'] ?? null;
+            $arr['target_signer_name'] = $targetSigners[0]['name'] ?? null;
+            $arr['signed_at'] = $latestSigned?->signed_at ? $latestSigned->signed_at->toIso8601String() : null;
+            return $arr;
+        })->toArray();
     });
 
     return response()->json($mapped);
 });
 
-Route::post('/documents', function (Request $request) use ($resolveUser) {
+Route::post('/documents', function (Request $request) use ($resolveUser, $clearCache) {
     $request->validate([
         'title' => 'required|string|max:255',
         'type' => 'nullable|string|max:255',
@@ -175,7 +236,7 @@ Route::post('/documents', function (Request $request) use ($resolveUser) {
 
     $path = $request->file('file')->store('documents');
 
-    $user = $resolveUser($request);
+    $user = $resolveUser($request, true);
     $userId = $user?->id ?? User::first()?->id;
     $userName = $user?->name ?? 'Pengguna';
 
@@ -187,16 +248,19 @@ Route::post('/documents', function (Request $request) use ($resolveUser) {
         'uploaded_by_id' => $userId,
     ]);
 
-    // Kalau ada target signer, langsung buat request tanda tangan
+    // Kalau ada target signer, langsung buat request tanda tangan (case-insensitive & cegah duplikat)
     if ($request->has('target_signer_emails')) {
         $raw = $request->target_signer_emails;
         $emails = is_array($raw) ? $raw : (json_decode($raw, true) ?? []);
         foreach ($emails as $email) {
-            $signer = User::where('email', $email)->first();
+            $cleanEmail = strtolower(trim((string)$email));
+            if (!$cleanEmail) continue;
+            $signer = User::whereRaw('LOWER(email) = ?', [$cleanEmail])->first();
             if ($signer) {
-                Signature::create([
+                Signature::firstOrCreate([
                     'document_id' => $doc->id,
                     'signer_id' => $signer->id,
+                ], [
                     'signed_at' => null,
                     'ip_address' => null,
                 ]);
@@ -214,38 +278,109 @@ Route::post('/documents', function (Request $request) use ($resolveUser) {
         'ip_address' => $request->ip(),
     ]);
 
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
+
     return response()->json(['success' => true, 'document' => $doc->load('uploadedBy')], 201);
 });
 
-Route::delete('/documents/{id}', function ($id) use ($resolveUser) {
+Route::post('/documents/use-template', function (Request $request) use ($resolveUser, $clearCache) {
+    $request->validate(['template_name' => 'required|string']);
+    
+    $user = $resolveUser($request, true);
+    $userId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+    $userName = $user?->name ?? 'Pengguna';
+
+    $templateName = $request->template_name;
+    $cleanName = str_replace('Template ', '', $templateName);
+    $title = 'Draft - ' . $cleanName . '.pdf';
+    $type = 'General';
+    if (stripos($templateName, 'NDA') !== false) $type = 'Kontrak';
+    if (stripos($templateName, 'PKS') !== false) $type = 'Kontrak';
+    if (stripos($templateName, 'SOP') !== false) $type = 'SOP';
+    
+    $doc = Document::create([
+        'title' => $title,
+        'type' => $type,
+        'status' => 'draft',
+        'file_path' => null,
+        'uploaded_by_id' => $userId,
+    ]);
+    
+    ActivityLog::create([
+        'user_id' => $userId,
+        'action' => 'upload',
+        'description' => $userName . ' membuat dokumen baru dari template: ' . $templateName,
+        'ip_address' => $request->ip(),
+    ]);
+
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
+
+    return response()->json(['success' => true, 'document' => $doc->load('uploadedBy')], 201);
+});
+
+Route::delete('/documents/{id}', function (Request $request, $id) use ($resolveUser, $clearCache) {
     $doc = Document::findOrFail($id);
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
+    // Proteksi Otorisasi: Hanya pemilik dokumen atau admin yang dapat menghapus
+    if ($user && $user->role !== 'admin' && $doc->uploaded_by_id !== $user->id) {
+        return response()->json([
+            'success' => false, 
+            'message' => 'Anda tidak memiliki hak untuk menghapus dokumen ini.'
+        ], 403);
+    }
+
+    // Integritas Dokumen: Dokumen yang telah sah ditandatangani dilindungi dari penghapusan sembarangan
+    if ($doc->status === 'signed' && (!$user || $user->role !== 'admin')) {
+        return response()->json([
+            'success' => false, 
+            'message' => 'Dokumen yang telah ditandatangani secara sah tidak dapat dihapus.'
+        ], 403);
+    }
+
     $title = $doc->title;
+    $filePath = $doc->file_path;
+
     $doc->delete();
 
-    $user = $resolveUser();
+    // Bersihkan file fisik di storage agar tidak terjadi orphaned storage
+    if ($filePath && Storage::exists($filePath)) {
+        Storage::delete($filePath);
+    }
+
     ActivityLog::create([
-        'user_id' => $user?->id,
-        'action' => 'system',
+        'user_id' => $actorId,
+        'action' => 'delete',
         'description' => ($user?->name ?? 'Pengguna') . ' menghapus dokumen: ' . $title,
-        'ip_address' => request()->ip(),
+        'ip_address' => $request->ip(),
     ]);
+
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
 
     return response()->json(['success' => true]);
 });
 
-Route::post('/documents/{id}/request-signer', function (Request $request, $id) use ($resolveUser) {
-    $user = $resolveUser($request);
-    if ($user && $user->role !== 'admin') {
-        return response()->json(['success' => false, 'message' => 'Hanya admin yang dapat meminta tanda tangan dari user lain.'], 403);
-    }
-
+Route::post('/documents/{id}/request-signer', function (Request $request, $id) use ($resolveUser, $clearCache) {
     $doc = Document::findOrFail($id);
+    $user = $resolveUser($request);
+
+    $isOwner = $user && ($user->id === $doc->uploaded_by_id);
+    $isAdmin = $user && ($user->role === 'admin');
+
+    // Izinkan jika user adalah admin ATAU pemilik dokumen
+    if ($user && !$isAdmin && !$isOwner) {
+        return response()->json(['success' => false, 'message' => 'Hanya admin atau pemilik dokumen yang dapat meminta tanda tangan dari user lain.'], 403);
+    }
 
     $request->validate([
         'email' => 'required|email|exists:users,email',
     ]);
 
-    $signer = User::where('email', $request->email)->first();
+    $signer = User::whereRaw('LOWER(email) = ?', [strtolower(trim($request->email))])->first();
+    if (!$signer) {
+        return response()->json(['success' => false, 'message' => 'User penanda tangan tidak ditemukan.'], 404);
+    }
 
     // Hindari duplikat kalau user yang sama sudah jadi target di dokumen ini
     $existing = Signature::where('document_id', $doc->id)
@@ -261,16 +396,26 @@ Route::post('/documents/{id}/request-signer', function (Request $request, $id) u
         ]);
     }
 
-    if ($doc->status === 'draft') {
+    if (in_array($doc->status, ['draft', 'rejected'])) {
         $doc->update(['status' => 'pending']);
     }
+
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
 
     return response()->json(['success' => true, 'document' => $doc->load(['uploadedBy', 'signatures.signer'])]);
 });
 
-Route::post('/documents/{id}/sign', function (Request $request, $id) use ($resolveUser) {
+Route::post('/documents/{id}/sign', function (Request $request, $id) use ($resolveUser, $clearCache) {
     $doc = Document::findOrFail($id);
     $user = $resolveUser($request);
+
+    if ($doc->status === 'rejected') {
+        return response()->json(['success' => false, 'message' => 'Dokumen ini telah berstatus ditolak dan tidak dapat ditandatangani.'], 400);
+    }
+
+    if ($doc->status === 'signed') {
+        return response()->json(['success' => false, 'message' => 'Dokumen ini telah selesai ditandatangani.'], 400);
+    }
 
     $signerId = $request->input('signer_id') 
         ?? $request->input('user_id') 
@@ -311,7 +456,126 @@ Route::post('/documents/{id}/sign', function (Request $request, $id) use ($resol
         'ip_address' => $request->ip(),
     ]);
 
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
+
     return response()->json(['success' => true, 'document' => $doc->load(['uploadedBy', 'signatures.signer'])]);
+});
+
+Route::post('/documents/{id}/reject', function (Request $request, $id) use ($resolveUser, $clearCache) {
+    $doc = Document::findOrFail($id);
+    $user = $resolveUser($request);
+
+    if ($doc->status === 'signed') {
+        return response()->json([
+            'success' => false, 
+            'message' => 'Dokumen yang sudah ditandatangani tidak dapat ditolak.'
+        ], 400);
+    }
+
+    $signerId = $request->input('signer_id') 
+        ?? $request->input('user_id') 
+        ?? $user?->id;
+    $email = $request->input('email') 
+        ?? $request->header('X-User-Email') 
+        ?? $user?->email;
+
+    $sig = Signature::where('document_id', $doc->id)
+        ->where(function ($query) use ($signerId, $email) {
+            if ($signerId) {
+                $query->where('signer_id', $signerId);
+            }
+            if ($email) {
+                $query->orWhereHas('signer', function ($q) use ($email) {
+                    $q->whereRaw('LOWER(email) = ?', [strtolower(trim($email))]);
+                });
+            }
+        })
+        ->whereNull('signed_at')
+        ->first();
+
+    $isOwner = $user && ($user->id === $doc->uploaded_by_id);
+    $isAdmin = $user && ($user->role === 'admin');
+
+    if (!$sig && !$isOwner && !$isAdmin) {
+        return response()->json([
+            'success' => false, 
+            'message' => 'Anda tidak memiliki wewenang atau permintaan pending untuk menolak dokumen ini.'
+        ], 403);
+    }
+
+    $reason = $request->input('reason');
+    $reasonText = $reason ? trim($reason) : 'Tidak ada alasan yang disertakan.';
+
+    $doc->update(['status' => 'rejected']);
+
+    $actorName = $user?->name ?? $sig?->signer?->name ?? 'Pengguna';
+    $actorId = $user?->id ?? $sig?->signer_id ?? $doc->uploaded_by_id;
+
+    ActivityLog::create([
+        'user_id' => $actorId,
+        'action' => 'rejected',
+        'description' => $actorName . ' menolak dokumen: ' . $doc->title . ' (Alasan: ' . $reasonText . ')',
+        'ip_address' => $request->ip(),
+    ]);
+
+    if ($doc->uploaded_by_id) {
+        Notification::create([
+            'user_id' => $doc->uploaded_by_id,
+            'title' => 'Dokumen Ditolak',
+            'message' => $actorName . ' menolak dokumen "' . $doc->title . '". Alasan: ' . $reasonText,
+            'type' => 'warning',
+            'link' => 'documents',
+        ]);
+    }
+
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Dokumen berhasil ditolak.',
+        'document' => $doc->load(['uploadedBy', 'signatures.signer'])
+    ]);
+});
+
+Route::post('/signatures/{id}/reject', function (Request $request, $id) use ($resolveUser, $clearCache) {
+    $sig = Signature::with('document')->findOrFail($id);
+    $doc = $sig->document;
+    $user = $resolveUser($request);
+
+    if ($sig->signer_id !== $user?->id && $user?->role !== 'admin') {
+        return response()->json(['success' => false, 'message' => 'Anda tidak memiliki izin untuk menolak tanda tangan ini.'], 403);
+    }
+
+    $reason = $request->input('reason');
+    $reasonText = $reason ? trim($reason) : 'Tidak ada alasan yang disertakan.';
+
+    $doc->update(['status' => 'rejected']);
+
+    $actorName = $user?->name ?? $sig->signer?->name ?? 'Pengguna';
+    ActivityLog::create([
+        'user_id' => $user?->id ?? $sig->signer_id,
+        'action' => 'rejected',
+        'description' => $actorName . ' menolak dokumen: ' . $doc->title . ' (Alasan: ' . $reasonText . ')',
+        'ip_address' => $request->ip(),
+    ]);
+
+    if ($doc->uploaded_by_id) {
+        Notification::create([
+            'user_id' => $doc->uploaded_by_id,
+            'title' => 'Dokumen Ditolak',
+            'message' => $actorName . ' menolak dokumen "' . $doc->title . '". Alasan: ' . $reasonText,
+            'type' => 'warning',
+            'link' => 'documents',
+        ]);
+    }
+
+    $clearCache(['api_documents', 'api_activities', 'api_dashboard_summary']);
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Dokumen berhasil ditolak.',
+        'document' => $doc->load(['uploadedBy', 'signatures.signer'])
+    ]);
 });
 
 Route::post('/documents/verify', function (Request $request) {
@@ -361,10 +625,13 @@ Route::post('/documents/verify', function (Request $request) {
 // ============ CERTIFICATES ============
 
 Route::get('/certificates', function () {
-    return response()->json(Certificate::orderBy('valid_until', 'asc')->get());
+    $certs = Cache::remember('api_certificates', 60, function () {
+        return Certificate::orderBy('valid_until', 'asc')->get()->toArray();
+    });
+    return response()->json($certs);
 });
 
-Route::post('/certificates', function (Request $request) use ($resolveUser) {
+Route::post('/certificates', function (Request $request) use ($resolveUser, $clearCache) {
     $validated = $request->validate([
         'name' => 'required|string|max:255',
         'holder' => 'required|string|max:255',
@@ -381,28 +648,37 @@ Route::post('/certificates', function (Request $request) use ($resolveUser) {
         'valid_until' => now()->addDays($days)->toDateString(),
     ]);
 
-    $user = $resolveUser($request);
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => 'system',
         'description' => ($user?->name ?? 'Pengguna') . ' menerbitkan sertifikat: ' . $cert->name,
         'ip_address' => $request->ip(),
     ]);
 
+    $clearCache(['api_certificates', 'api_activities', 'api_dashboard_summary']);
+
     return response()->json(['success' => true, 'certificate' => $cert], 201);
 });
 
-Route::delete('/certificates/{id}', function ($id) use ($resolveUser) {
+Route::delete('/certificates/{id}', function (Request $request, $id) use ($resolveUser, $clearCache) {
     $cert = Certificate::findOrFail($id);
+    $certName = $cert->name;
     $cert->delete();
 
-    $user = $resolveUser();
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => 'system',
-        'description' => ($user?->name ?? 'Pengguna') . ' mencabut sertifikat: ' . $cert->name,
-        'ip_address' => request()->ip(),
+        'description' => ($user?->name ?? 'Pengguna') . ' mencabut sertifikat: ' . $certName,
+        'ip_address' => $request->ip(),
     ]);
+
+    $clearCache(['api_certificates', 'api_activities', 'api_dashboard_summary']);
 
     return response()->json(['success' => true]);
 });
@@ -410,11 +686,15 @@ Route::delete('/certificates/{id}', function ($id) use ($resolveUser) {
 // ============ TEAMS ============
 
 Route::get('/teams', function () {
-    return response()->json(Team::with('members')->latest()->get());
+    $teams = Cache::remember('api_teams', 60, function () {
+        return Team::with('members')->latest()->get()->toArray();
+    });
+    return response()->json($teams);
 });
 
-Route::post('/teams', function (Request $request) use ($resolveUser) {
-    $user = $resolveUser($request);
+Route::post('/teams', function (Request $request) use ($resolveUser, $clearCache) {
+    $user = $resolveUser($request, true);
+    $userId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
 
     // If ID is passed, update existing team and its members
     if ($request->has('id') && $request->id) {
@@ -431,6 +711,7 @@ Route::post('/teams', function (Request $request) use ($resolveUser) {
                 }
                 $team->members()->sync($syncData);
             }
+            $clearCache(['api_teams', 'api_activities']);
             return response()->json(['success' => true, 'team' => $team->load('members')]);
         }
     }
@@ -452,45 +733,50 @@ Route::post('/teams', function (Request $request) use ($resolveUser) {
             }
             $existing->members()->sync($syncData);
         }
+        $clearCache(['api_teams', 'api_activities']);
         return response()->json(['success' => true, 'team' => $existing->load('members')]);
     }
 
     $team = Team::create([
         ...$validated,
-        'created_by_id' => $user?->id,
+        'created_by_id' => $userId,
     ]);
 
-    if ($user) {
-        $team->members()->attach($user->id, ['role' => 'Leader']);
-    }
+    $team->members()->attach($userId, ['role' => 'Leader']);
 
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $userId,
         'action' => 'system',
         'description' => ($user?->name ?? 'Pengguna') . ' membuat tim baru: ' . $team->name,
         'ip_address' => $request->ip(),
     ]);
 
+    $clearCache(['api_teams', 'api_activities']);
+
     return response()->json(['success' => true, 'team' => $team->load('members')], 201);
 });
 
-Route::delete('/teams/{id}', function ($id) use ($resolveUser) {
+Route::delete('/teams/{id}', function (Request $request, $id) use ($resolveUser, $clearCache) {
     $team = Team::findOrFail($id);
     $name = $team->name;
     $team->delete();
 
-    $user = $resolveUser();
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => 'system',
         'description' => ($user?->name ?? 'Pengguna') . ' menghapus tim: ' . $name,
-        'ip_address' => request()->ip(),
+        'ip_address' => $request->ip(),
     ]);
+
+    $clearCache(['api_teams', 'api_activities']);
 
     return response()->json(['success' => true]);
 });
 
-Route::post('/teams/{id}/members', function (Request $request, $id) use ($resolveUser) {
+Route::post('/teams/{id}/members', function (Request $request, $id) use ($resolveUser, $clearCache) {
     $team = Team::findOrFail($id);
 
     $validated = $request->validate([
@@ -504,28 +790,36 @@ Route::post('/teams/{id}/members', function (Request $request, $id) use ($resolv
 
     $team->members()->attach($validated['user_id'], ['role' => $validated['role']]);
 
-    $user = $resolveUser($request);
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => 'update',
         'description' => ($user?->name ?? 'Pengguna') . ' menambahkan anggota ke tim: ' . $team->name,
         'ip_address' => $request->ip(),
     ]);
 
+    $clearCache(['api_teams', 'api_activities']);
+
     return response()->json(['success' => true, 'team' => $team->load('members')]);
 });
 
-Route::delete('/teams/{id}/members/{userId}', function ($id, $userId) use ($resolveUser) {
+Route::delete('/teams/{id}/members/{userId}', function (Request $request, $id, $userId) use ($resolveUser, $clearCache) {
     $team = Team::findOrFail($id);
     $team->members()->detach($userId);
 
-    $user = $resolveUser();
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => 'update',
         'description' => ($user?->name ?? 'Pengguna') . ' mengeluarkan anggota dari tim: ' . $team->name,
-        'ip_address' => request()->ip(),
+        'ip_address' => $request->ip(),
     ]);
+
+    $clearCache(['api_teams', 'api_activities']);
 
     return response()->json(['success' => true, 'team' => $team->load('members')]);
 });
@@ -533,10 +827,13 @@ Route::delete('/teams/{id}/members/{userId}', function ($id, $userId) use ($reso
 // ============ API KEYS ============
 
 Route::get('/api-keys', function () {
-    return response()->json(ApiKey::latest()->get());
+    $keys = Cache::remember('api_keys', 60, function () {
+        return ApiKey::latest()->get()->toArray();
+    });
+    return response()->json($keys);
 });
 
-Route::post('/api-keys', function (Request $request) use ($resolveUser) {
+Route::post('/api-keys', function (Request $request) use ($resolveUser, $clearCache) {
     $validated = $request->validate(['name' => 'required|string|max:255']);
 
     $rawKey = 'lx_live_' . bin2hex(random_bytes(20));
@@ -548,56 +845,128 @@ Route::post('/api-keys', function (Request $request) use ($resolveUser) {
         'last_used_at' => null,
     ]);
 
-    $user = $resolveUser($request);
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
+
     ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => 'system',
         'description' => ($user?->name ?? 'Pengguna') . ' membuat API Key baru: ' . $apiKey->name,
         'ip_address' => $request->ip(),
     ]);
 
+    $clearCache(['api_keys', 'api_activities']);
+
     // key mentah cuma dikirim sekali saat create
     return response()->json(['success' => true, 'api_key' => $apiKey, 'raw_key' => $rawKey], 201);
 });
 
-Route::post('/api-keys/{id}/toggle', function ($id) {
+Route::post('/api-keys/{id}/toggle', function ($id) use ($clearCache) {
     $key = ApiKey::findOrFail($id);
     $key->update(['status' => $key->status === 'active' ? 'inactive' : 'active']);
+    $clearCache(['api_keys', 'api_activities']);
     return response()->json(['success' => true, 'api_key' => $key]);
 });
 
-Route::delete('/api-keys/{id}', function ($id) {
+Route::delete('/api-keys/{id}', function ($id) use ($clearCache) {
     $key = ApiKey::findOrFail($id);
     $key->delete();
+    $clearCache(['api_keys', 'api_activities']);
     return response()->json(['success' => true]);
 });
 
 // ============ ACTIVITIES ============
 
 Route::get('/activities', function () {
-    $logs = ActivityLog::with('user:id,name,email')->latest()->limit(50)->get();
+    $mapped = Cache::remember('api_activities', 30, function () {
+        $logs = ActivityLog::with('user:id,name,email')->latest()->limit(50)->get();
 
-    $mapped = $logs->map(function ($log) {
-        return [
-            'id' => $log->id,
-            'action' => $log->action,
-            'description' => $log->description,
-            'user_name' => $log->user->name ?? 'System',
-            'ip_address' => $log->ip_address,
-            'created_at' => $log->created_at,
-        ];
+        return $logs->map(function ($log) {
+            return [
+                'id' => $log->id,
+                'action' => $log->action,
+                'description' => $log->description,
+                'user_name' => $log->user->name ?? 'System',
+                'ip_address' => $log->ip_address,
+                'created_at' => $log->created_at,
+            ];
+        })->toArray();
     });
 
     return response()->json($mapped);
 });
 
-Route::post('/activities', function (Request $request) use ($resolveUser) {
-    $user = $resolveUser($request);
+Route::post('/activities', function (Request $request) use ($resolveUser, $clearCache) {
+    $user = $resolveUser($request, true);
+    $actorId = $user?->id ?? User::where('role', 'admin')->first()?->id ?? User::first()?->id ?? 1;
     $log = ActivityLog::create([
-        'user_id' => $user?->id,
+        'user_id' => $actorId,
         'action' => $request->input('action', 'system'),
         'description' => $request->input('description', ''),
         'ip_address' => $request->ip(),
     ]);
+    $clearCache(['api_activities', 'api_dashboard_summary']);
     return response()->json(['success' => true, 'activity' => $log], 201);
+});
+
+// ============ AGGREGATED DASHBOARD (ULTRA FAST) ============
+
+Route::get('/dashboard-summary', function () {
+    $summary = Cache::remember('api_dashboard_summary', 30, function () {
+        $docs = Document::with([
+            'uploadedBy:id,name,email,role',
+            'signatures' => function ($query) {
+                $query->with('signer:id,name,email,role');
+            }
+        ])->latest()->get();
+
+        $mappedDocs = $docs->map(function ($doc) {
+            $targetSigners = $doc->signatures->map(function ($sig) use ($doc) {
+                $status = $sig->signed_at 
+                    ? 'signed' 
+                    : ($doc->status === 'rejected' ? 'rejected' : 'pending');
+                return [
+                    'id' => $sig->signer?->id,
+                    'name' => $sig->signer?->name,
+                    'email' => $sig->signer?->email,
+                    'status' => $status,
+                    'signed_at' => $sig->signed_at ? $sig->signed_at->toIso8601String() : null,
+                ];
+            })->values()->toArray();
+
+            $latestSigned = $doc->signatures->whereNotNull('signed_at')->sortByDesc('signed_at')->first();
+
+            $arr = $doc->toArray();
+            $arr['uploaded_by_id'] = $doc->uploaded_by_id;
+            $arr['uploaded_by_name'] = $doc->uploadedBy?->name ?? 'Pengguna';
+            $arr['uploaded_by_email'] = $doc->uploadedBy?->email ?? '';
+            $arr['target_signers'] = $targetSigners;
+            $arr['target_signer_email'] = $targetSigners[0]['email'] ?? null;
+            $arr['target_signer_name'] = $targetSigners[0]['name'] ?? null;
+            $arr['signed_at'] = $latestSigned?->signed_at ? $latestSigned->signed_at->toIso8601String() : null;
+            return $arr;
+        })->toArray();
+
+        $certs = Certificate::orderBy('valid_until', 'asc')->get()->toArray();
+
+        $logs = ActivityLog::with('user:id,name,email')->latest()->limit(50)->get();
+        $mappedLogs = $logs->map(function ($log) {
+            return [
+                'id' => $log->id,
+                'action' => $log->action,
+                'description' => $log->description,
+                'user_name' => $log->user->name ?? 'System',
+                'ip_address' => $log->ip_address,
+                'created_at' => $log->created_at,
+            ];
+        })->toArray();
+
+        return [
+            'documents' => $mappedDocs,
+            'certificates' => $certs,
+            'activities' => $mappedLogs,
+        ];
+    });
+
+    return response()->json($summary);
 });

@@ -12,6 +12,7 @@ use App\Models\Signature;
 use App\Models\Team;
 use App\Models\ApiKey;
 use App\Models\Notification;
+use Illuminate\Support\Facades\Cache;
 
 // 1. Authentication Routes
 Route::get('/login', function () {
@@ -283,6 +284,38 @@ Route::middleware('auth')->group(function () {
         }
         
         return redirect('/?tab=signatures')->with('success', 'Dokumen "' . $doc->title . '" berhasil ditandatangani!');
+    });
+
+    Route::post('/signatures/{id}/reject', function (Request $request, $id) {
+        $sig = Signature::findOrFail($id);
+        
+        if ($sig->signer_id !== Auth::id()) {
+            return redirect('/?tab=signatures')->with('error', 'Anda tidak memiliki izin untuk menolak dokumen ini.');
+        }
+        
+        $doc = $sig->document;
+        $reason = $request->input('reason', 'Tidak ada alasan yang disertakan.');
+        
+        $doc->update(['status' => 'rejected']);
+        
+        ActivityLog::create([
+            'user_id' => $sig->signer_id,
+            'action' => 'rejected',
+            'description' => $sig->signer->name . ' menolak dokumen: ' . $doc->title . ' (Alasan: ' . $reason . ')',
+            'ip_address' => $request->ip(),
+        ]);
+
+        if ($doc->uploaded_by_id) {
+            Notification::create([
+                'user_id' => $doc->uploaded_by_id,
+                'title' => 'Dokumen Ditolak',
+                'message' => $sig->signer->name . ' telah menolak dokumen "' . $doc->title . '". Alasan: ' . $reason,
+                'type' => 'warning',
+                'link' => 'documents',
+            ]);
+        }
+        
+        return redirect('/?tab=signatures')->with('success', 'Dokumen "' . $doc->title . '" berhasil ditolak.');
     });
 
     Route::post('/certificates', function (Request $request) {
